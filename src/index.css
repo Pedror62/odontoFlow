@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* Opcional: Adicionamos um layer base para garantir o estilo do sistema */
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+}
