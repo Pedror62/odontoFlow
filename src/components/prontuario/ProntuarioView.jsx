@@ -55,21 +55,29 @@ export default function ProntuarioView({
   const [retornoData, setRetornoData] = useState({ data: '', horario: '', sala: '', observacoes: '' });
   const [tempoAtendimento, setTempoAtendimento] = useState(0);
   const [tempoEstimado, setTempoEstimado] = useState(30);
+  const [timerAtivo, setTimerAtivo] = useState(false);
 
-  // Timer do atendimento
+  // Timer do atendimento - CORRIGIDO
   useEffect(() => {
-    if (atendimento && atendimento.status === 'em_andamento') {
-      const timer = setInterval(() => {
+    let timer;
+    if (atendimento && atendimento.status === 'em_andamento' && !timerAtivo) {
+      setTimerAtivo(true);
+      timer = setInterval(() => {
         setTempoAtendimento(prev => prev + 1);
       }, 1000);
-      return () => clearInterval(timer);
     }
-  }, [atendimento]);
+    return () => {
+      if (timer) {
+        clearInterval(timer);
+        setTimerAtivo(false);
+      }
+    };
+  }, [atendimento, atendimento?.status]);
 
   // Buscar tempo estimado do procedimento
   useEffect(() => {
     if (atendimento?.procedimento_nome) {
-      const proc = procedimentos.find(p => p.nome === atendimento.procedimento_nome);
+      const proc = procedimentos?.find(p => p.nome === atendimento.procedimento_nome);
       if (proc && proc.duracao) setTempoEstimado(proc.duracao);
     }
   }, [atendimento, procedimentos]);
@@ -88,7 +96,7 @@ export default function ProntuarioView({
     img.paciente_id === paciente?.id || img.paciente_nome === paciente?.nome
   );
 
-  // Carregar histórico
+  // Carregar histórico - CORRIGIDO
   useEffect(() => {
     if (paciente) {
       const saved = localStorage.getItem(`prontuario_${paciente.id || paciente.nome}`);
@@ -105,7 +113,7 @@ export default function ProntuarioView({
         localStorage.setItem(`prontuario_${paciente.id || paciente.nome}`, JSON.stringify(inicial));
       }
     }
-  }, [paciente, atendimento]);
+  }, [paciente, atendimento?.procedimento_nome]);
 
   const salvarHistorico = (novoHistorico) => {
     setHistorico(novoHistorico);
@@ -116,7 +124,12 @@ export default function ProntuarioView({
 
   const adicionarHistorico = (texto, tipo = 'manual') => {
     if (!texto.trim()) return;
-    const novo = { id: Date.now(), data: new Date().toLocaleString(), tipo, descricao: texto };
+    const novo = { 
+      id: Date.now(), 
+      data: new Date().toLocaleString(), 
+      tipo, 
+      descricao: texto 
+    };
     salvarHistorico([novo, ...historico]);
     setNovaAnotacao('');
     showToast('Anotação adicionada!', 'success');
@@ -128,7 +141,10 @@ export default function ProntuarioView({
   };
 
   const adicionarPrescricao = () => {
-    if (!prescricao.medicamento) return;
+    if (!prescricao.medicamento) {
+      showToast('Selecione um medicamento', 'error');
+      return;
+    }
     const text = `💊 Prescrição: ${prescricao.medicamento}\nPosologia: ${prescricao.posologia}\nObs: ${prescricao.observacoes}`;
     adicionarHistorico(text, 'manual');
     setShowPrescricao(false);
@@ -142,32 +158,85 @@ export default function ProntuarioView({
     }
     const text = `📅 Retorno agendado para ${retornoData.data} às ${retornoData.horario} - Sala ${retornoData.sala}\nObs: ${retornoData.observacoes}`;
     adicionarHistorico(text, 'sistema');
-    onPedirRetorno?.({ paciente, procedimento: atendimento?.procedimento_nome, ...retornoData });
+    onPedirRetorno?.({ 
+      paciente: paciente, 
+      procedimento: atendimento?.procedimento_nome, 
+      data: retornoData.data, 
+      horario: retornoData.horario, 
+      sala: retornoData.sala, 
+      observacoes: retornoData.observacoes 
+    });
     setShowRetornoForm(false);
     setRetornoData({ data: '', horario: '', sala: '', observacoes: '' });
     showToast('Retorno agendado!', 'success');
   };
 
   const finalizarComMateriais = async () => {
-    let procId = atendimento?.procedimento_id;
+    if (!atendimento) {
+      showToast('Nenhum atendimento ativo', 'error');
+      return;
+    }
+
+    let procId = atendimento.procedimento_id;
     if (!procId) {
-      const proc = procedimentos.find(p => p.nome === atendimento?.procedimento_nome);
+      const proc = procedimentos?.find(p => p.nome === atendimento.procedimento_nome);
       procId = proc?.id;
     }
-    let salaNum = String(atendimento?.sala || '01').trim();
+    
+    if (!procId) {
+      showToast('Procedimento não identificado', 'error');
+      return;
+    }
+
+    let salaNum = String(atendimento.sala || '01').trim();
     const match = salaNum.match(/\d+/);
     salaNum = match ? match[0].padStart(2, '0') : '01';
-    const result = await consumirMateriais(procId, salaNum, paciente?.nome, atendimento?.dentista_nome);
+    
+    const result = await consumirMateriais(
+      procId, 
+      salaNum, 
+      paciente?.nome || paciente?.paciente_nome, 
+      atendimento.dentista_nome
+    );
+    
     if (!result.success) {
       showToast(result.message, 'error');
       return;
     }
+    
     setMateriaisConsumidos(result.consumo);
     setShowMateriaisModal(true);
+    
     const materiaisText = result.consumo.map(m => `${m.materialNome}: ${m.quantidade} un`).join(', ');
-    adicionarHistorico(`✅ Atendimento finalizado.\nMateriais: ${materiaisText}\nCusto: R$ ${result.consumo.reduce((s, i) => s + i.custo, 0).toFixed(2)}`, 'sistema');
-    showToast('Atendimento finalizado!', 'success');
-    setTimeout(() => onFinalizar?.(), 1500);
+    const custoTotal = result.consumo.reduce((s, i) => s + i.custo, 0).toFixed(2);
+    adicionarHistorico(`✅ Atendimento finalizado.\nMateriais: ${materiaisText}\nCusto: R$ ${custoTotal}`, 'sistema');
+    showToast(`Atendimento finalizado! Custo materiais: R$ ${custoTotal}`, 'success');
+    
+    setTimeout(() => {
+      setShowMateriaisModal(false);
+      onFinalizar?.();
+    }, 2000);
+  };
+
+  // Função para adicionar imagem
+  const handleAddImagem = () => {
+    if (!uploadPreview) return;
+    setUploading(true);
+    setTimeout(() => {
+      const novaImagem = { 
+        id: Date.now(), 
+        url: uploadPreview, 
+        paciente_id: paciente.id,
+        paciente_nome: paciente.nome,
+        data: new Date().toISOString() 
+      };
+      adicionarImagem(novaImagem);
+      adicionarHistorico(`📸 Exame/Imagem adicionado ao prontuário`, 'sistema');
+      setUploading(false);
+      setShowUploadModal(false);
+      setUploadPreview(null);
+      showToast('Imagem salva!', 'success');
+    }, 1000);
   };
 
   if (!paciente) {
@@ -188,19 +257,29 @@ export default function ProntuarioView({
       <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-white">
         <div className="flex justify-between items-start">
           <div>
-            <h2 className="text-xl font-bold">{paciente.nome}</h2>
-            <div className="flex gap-3 mt-1 text-sm text-gray-500">
+            <h2 className="text-xl font-bold">{paciente.nome || paciente.paciente_nome}</h2>
+            <div className="flex gap-3 mt-1 text-sm text-gray-500 flex-wrap">
               {paciente.telefone && <span>📞 {paciente.telefone}</span>}
               {paciente.convenio && <span>🏥 {paciente.convenio}</span>}
-              <span>🦷 {atendimento?.procedimento_nome}</span>
+              <span>🦷 {atendimento?.procedimento_nome || 'Consulta'}</span>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button onClick={onPausar} className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-sm flex items-center gap-1"><Pause size={14} /> Pausar</button>
-            <button onClick={() => setShowTemplates(true)} className="px-3 py-1.5 bg-gray-500 text-white rounded-lg text-sm"><FileText size={14} /> Templates</button>
-            <button onClick={() => setShowPrescricao(true)} className="px-3 py-1.5 bg-purple-500 text-white rounded-lg text-sm"><Pill size={14} /> Prescrever</button>
-            <button onClick={() => setShowRetornoForm(true)} className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-sm"><CalendarIcon size={14} /> Retorno</button>
-            <button onClick={finalizarComMateriais} className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm"><CheckCircle size={14} /> Finalizar</button>
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={onPausar} className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-sm flex items-center gap-1 hover:bg-yellow-600 transition">
+              <Pause size={14} /> Pausar
+            </button>
+            <button onClick={() => setShowTemplates(true)} className="px-3 py-1.5 bg-gray-500 text-white rounded-lg text-sm flex items-center gap-1 hover:bg-gray-600 transition">
+              <FileText size={14} /> Templates
+            </button>
+            <button onClick={() => setShowPrescricao(true)} className="px-3 py-1.5 bg-purple-500 text-white rounded-lg text-sm flex items-center gap-1 hover:bg-purple-600 transition">
+              <Pill size={14} /> Prescrever
+            </button>
+            <button onClick={() => setShowRetornoForm(true)} className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-sm flex items-center gap-1 hover:bg-blue-600 transition">
+              <CalendarIcon size={14} /> Retorno
+            </button>
+            <button onClick={finalizarComMateriais} className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm flex items-center gap-1 hover:bg-green-600 transition">
+              <CheckCircle size={14} /> Finalizar
+            </button>
           </div>
         </div>
         {/* Timer Bar */}
@@ -210,7 +289,10 @@ export default function ProntuarioView({
             <span>⏳ Estimado: {tempoEstimado} min</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2">
-            <div className={`h-2 rounded-full transition-all ${estaUltrapassando ? 'bg-red-500' : 'bg-green-500'}`} style={{ width: `${Math.min(percentualTempo, 100)}%` }} />
+            <div 
+              className={`h-2 rounded-full transition-all ${estaUltrapassando ? 'bg-red-500' : 'bg-green-500'}`} 
+              style={{ width: `${Math.min(percentualTempo, 100)}%` }} 
+            />
           </div>
           {estaUltrapassando && <p className="text-xs text-red-500 mt-1">⚠️ Tempo estimado ultrapassado!</p>}
         </div>
@@ -218,8 +300,18 @@ export default function ProntuarioView({
 
       {/* Abas */}
       <div className="flex border-b bg-gray-50">
-        <button onClick={() => setActiveTab('historico')} className={`flex-1 px-4 py-2 text-sm font-medium ${activeTab === 'historico' ? 'text-blue-600 border-b-2 border-blue-600 bg-white' : 'text-gray-500'}`}><History size={14} className="inline mr-1" /> Histórico</button>
-        <button onClick={() => setActiveTab('exames')} className={`flex-1 px-4 py-2 text-sm font-medium ${activeTab === 'exames' ? 'text-blue-600 border-b-2 border-blue-600 bg-white' : 'text-gray-500'}`}><Camera size={14} className="inline mr-1" /> Exames ({imagensPaciente.length})</button>
+        <button 
+          onClick={() => setActiveTab('historico')} 
+          className={`flex-1 px-4 py-2 text-sm font-medium transition ${activeTab === 'historico' ? 'text-blue-600 border-b-2 border-blue-600 bg-white' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          <History size={14} className="inline mr-1" /> Histórico
+        </button>
+        <button 
+          onClick={() => setActiveTab('exames')} 
+          className={`flex-1 px-4 py-2 text-sm font-medium transition ${activeTab === 'exames' ? 'text-blue-600 border-b-2 border-blue-600 bg-white' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          <Camera size={14} className="inline mr-1" /> Exames ({imagensPaciente.length})
+        </button>
       </div>
 
       {/* Conteúdo das Abas */}
@@ -227,13 +319,30 @@ export default function ProntuarioView({
         {activeTab === 'historico' && (
           <>
             <div className="mb-4">
-              <textarea value={novaAnotacao} onChange={(e) => setNovaAnotacao(e.target.value)} placeholder="Digite suas observações clínicas..." className="w-full p-3 border rounded-lg resize-none focus:ring-2 focus:ring-blue-500" rows="2" />
-              <button onClick={() => adicionarHistorico(novaAnotacao)} className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm"><Save size={14} className="inline mr-1" /> Salvar</button>
+              <textarea 
+                value={novaAnotacao} 
+                onChange={(e) => setNovaAnotacao(e.target.value)} 
+                placeholder="Digite suas observações clínicas..." 
+                className="w-full p-3 border rounded-lg resize-none focus:ring-2 focus:ring-blue-500" 
+                rows="2" 
+              />
+              <button 
+                onClick={() => adicionarHistorico(novaAnotacao)} 
+                className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition flex items-center gap-2"
+              >
+                <Save size={14} /> Salvar
+              </button>
             </div>
             <div className="space-y-3">
               {historico.map(reg => (
-                <div key={reg.id} className="border-l-4 border-blue-500 pl-3 py-2">
-                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-1"><Clock size={10} />{reg.data}<span className={`px-1.5 py-0.5 rounded text-xs ${reg.tipo === 'sistema' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100'}`}>{reg.tipo === 'sistema' ? 'Sistema' : 'Manual'}</span></div>
+                <div key={reg.id} className="border-l-4 border-blue-500 pl-3 py-2 bg-white rounded-r-lg">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-1 flex-wrap">
+                    <Clock size={10} />
+                    <span>{reg.data}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-xs ${reg.tipo === 'sistema' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                      {reg.tipo === 'sistema' ? '🤖 Sistema' : '📝 Manual'}
+                    </span>
+                  </div>
                   <p className="text-gray-800 text-sm whitespace-pre-wrap">{reg.descricao}</p>
                 </div>
               ))}
@@ -243,15 +352,34 @@ export default function ProntuarioView({
 
         {activeTab === 'exames' && (
           <div>
-            <button onClick={() => setShowUploadModal(true)} className="mb-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm flex items-center gap-2"><Upload size={14} /> Adicionar Exame</button>
+            <button 
+              onClick={() => setShowUploadModal(true)} 
+              className="mb-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm flex items-center gap-2 hover:bg-blue-700 transition"
+            >
+              <Upload size={14} /> Adicionar Exame
+            </button>
             {imagensPaciente.length === 0 ? (
-              <div className="text-center py-8 text-gray-400 border-2 border-dashed rounded-lg"><ImageIcon size={40} className="mx-auto mb-2" /><p>Nenhum exame adicionado</p></div>
+              <div className="text-center py-8 text-gray-400 border-2 border-dashed rounded-lg">
+                <ImageIcon size={40} className="mx-auto mb-2" />
+                <p>Nenhum exame adicionado</p>
+                <p className="text-xs mt-1">Clique em "Adicionar Exame" para anexar raio-x ou fotos</p>
+              </div>
             ) : (
               <div className="grid grid-cols-3 gap-3">
                 {imagensPaciente.map(img => (
                   <div key={img.id} className="relative group">
-                    <img src={img.url} className="w-full h-24 object-cover rounded-lg cursor-pointer" onClick={() => setImagemSelecionada(img)} />
-                    <button onClick={() => deletarImagem(img.id)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
+                    <img 
+                      src={img.url} 
+                      alt="Exame" 
+                      className="w-full h-24 object-cover rounded-lg cursor-pointer hover:opacity-90 transition" 
+                      onClick={() => setImagemSelecionada(img)} 
+                    />
+                    <button 
+                      onClick={() => deletarImagem(img.id)} 
+                      className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition"
+                    >
+                      <Trash2 size={12} />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -260,80 +388,193 @@ export default function ProntuarioView({
         )}
       </div>
 
-      {/* Modais */}
+      {/* Modal Templates */}
       {showTemplates && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-md max-h-[80vh] overflow-y-auto">
-            <div className="p-4 border-b flex justify-between"><h3 className="font-semibold">📋 Templates</h3><button onClick={() => setShowTemplates(false)}><X /></button></div>
-            <div className="p-4 space-y-2">
-              {TEMPLATES.map(t => <button key={t.id} onClick={() => aplicarTemplate(t)} className="w-full text-left p-3 hover:bg-blue-50 rounded-lg"><p className="font-medium">{t.titulo}</p><p className="text-xs text-gray-500 mt-1">{t.texto.substring(0, 80)}...</p></button>)}
+          <div className="bg-white rounded-xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-semibold">📋 Templates</h3>
+              <button onClick={() => setShowTemplates(false)} className="text-gray-500 hover:text-gray-700"><X size={20} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {TEMPLATES.map(t => (
+                <button 
+                  key={t.id} 
+                  onClick={() => aplicarTemplate(t)} 
+                  className="w-full text-left p-3 hover:bg-blue-50 rounded-lg transition"
+                >
+                  <p className="font-medium">{t.titulo}</p>
+                  <p className="text-xs text-gray-500 mt-1">{t.texto.substring(0, 80)}...</p>
+                </button>
+              ))}
             </div>
           </div>
         </div>
       )}
 
+      {/* Modal Prescrição */}
       {showPrescricao && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-md">
-            <div className="p-4 border-b"><h3 className="font-semibold">💊 Prescrição</h3></div>
-            <div className="p-4 space-y-3">
-              <select value={prescricao.medicamento} onChange={(e) => setPrescricaoForm({...prescricao, medicamento: e.target.value})} className="w-full p-2 border rounded-lg">
-                <option value="">Selecione</option>
-                {MEDICAMENTOS.map(m => <option key={m.id} value={`${m.nome} ${m.dosagem} - ${m.intervalo} por ${m.duracao}`}>{m.nome} {m.dosagem}</option>)}
-              </select>
-              <textarea placeholder="Posologia" value={prescricao.posologia} onChange={(e) => setPrescricaoForm({...prescricao, posologia: e.target.value})} className="w-full p-2 border rounded-lg" rows="2" />
-              <textarea placeholder="Observações" value={prescricao.observacoes} onChange={(e) => setPrescricaoForm({...prescricao, observacoes: e.target.value})} className="w-full p-2 border rounded-lg" rows="2" />
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-semibold">💊 Prescrição Médica</h3>
+              <button onClick={() => setShowPrescricao(false)} className="text-gray-500 hover:text-gray-700"><X size={20} /></button>
             </div>
-            <div className="p-4 border-t flex gap-2"><button onClick={adicionarPrescricao} className="flex-1 bg-blue-600 text-white py-2 rounded-lg">Adicionar</button><button onClick={() => setShowPrescricao(false)} className="flex-1 bg-gray-200 py-2 rounded-lg">Cancelar</button></div>
+            <div className="p-4 space-y-3">
+              <select 
+                value={prescricao.medicamento} 
+                onChange={(e) => setPrescricaoForm({...prescricao, medicamento: e.target.value})} 
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500"
+              >
+                <option value="">Selecione um medicamento</option>
+                {MEDICAMENTOS.map(m => (
+                  <option key={m.id} value={`${m.nome} ${m.dosagem} - ${m.intervalo} por ${m.duracao}`}>
+                    {m.nome} {m.dosagem}
+                  </option>
+                ))}
+              </select>
+              <textarea 
+                placeholder="Posologia (ex: Tomar 1 comprimido de 8/8h)" 
+                value={prescricao.posologia} 
+                onChange={(e) => setPrescricaoForm({...prescricao, posologia: e.target.value})} 
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500" 
+                rows="2" 
+              />
+              <textarea 
+                placeholder="Observações" 
+                value={prescricao.observacoes} 
+                onChange={(e) => setPrescricaoForm({...prescricao, observacoes: e.target.value})} 
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500" 
+                rows="2" 
+              />
+            </div>
+            <div className="p-4 border-t flex gap-2">
+              <button onClick={adicionarPrescricao} className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 transition">Adicionar</button>
+              <button onClick={() => setShowPrescricao(false)} className="flex-1 bg-gray-200 py-2 rounded-lg hover:bg-gray-300 transition">Cancelar</button>
+            </div>
           </div>
         </div>
       )}
 
+      {/* Modal Retorno */}
       {showRetornoForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-md">
-            <div className="p-4 border-b"><h3 className="font-semibold">📅 Agendar Retorno</h3></div>
-            <div className="p-4 space-y-3">
-              <input type="date" value={retornoData.data} onChange={(e) => setRetornoData({...retornoData, data: e.target.value})} className="w-full p-2 border rounded-lg" min={new Date().toISOString().split('T')[0]} />
-              <input type="time" value={retornoData.horario} onChange={(e) => setRetornoData({...retornoData, horario: e.target.value})} className="w-full p-2 border rounded-lg" />
-              <input type="text" placeholder="Sala" value={retornoData.sala} onChange={(e) => setRetornoData({...retornoData, sala: e.target.value})} className="w-full p-2 border rounded-lg" />
-              <textarea placeholder="Observações" value={retornoData.observacoes} onChange={(e) => setRetornoData({...retornoData, observacoes: e.target.value})} className="w-full p-2 border rounded-lg" rows="2" />
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-semibold">📅 Agendar Retorno</h3>
+              <button onClick={() => setShowRetornoForm(false)} className="text-gray-500 hover:text-gray-700"><X size={20} /></button>
             </div>
-            <div className="p-4 border-t flex gap-2"><button onClick={solicitarRetorno} className="flex-1 bg-blue-600 text-white py-2 rounded-lg">Confirmar</button><button onClick={() => setShowRetornoForm(false)} className="flex-1 bg-gray-200 py-2 rounded-lg">Cancelar</button></div>
+            <div className="p-4 space-y-3">
+              <input 
+                type="date" 
+                value={retornoData.data} 
+                onChange={(e) => setRetornoData({...retornoData, data: e.target.value})} 
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500" 
+                min={new Date().toISOString().split('T')[0]} 
+              />
+              <input 
+                type="time" 
+                value={retornoData.horario} 
+                onChange={(e) => setRetornoData({...retornoData, horario: e.target.value})} 
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500" 
+              />
+              <input 
+                type="text" 
+                placeholder="Sala" 
+                value={retornoData.sala} 
+                onChange={(e) => setRetornoData({...retornoData, sala: e.target.value})} 
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500" 
+              />
+              <textarea 
+                placeholder="Observações" 
+                value={retornoData.observacoes} 
+                onChange={(e) => setRetornoData({...retornoData, observacoes: e.target.value})} 
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500" 
+                rows="2" 
+              />
+            </div>
+            <div className="p-4 border-t flex gap-2">
+              <button onClick={solicitarRetorno} className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition">Confirmar</button>
+              <button onClick={() => setShowRetornoForm(false)} className="flex-1 bg-gray-200 py-2 rounded-lg hover:bg-gray-300 transition">Cancelar</button>
+            </div>
           </div>
         </div>
       )}
 
+      {/* Modal Materiais Consumidos */}
       {showMateriaisModal && materiaisConsumidos && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-md">
-            <div className="p-4 border-b bg-green-50"><h3 className="font-semibold text-green-700">✅ Materiais Consumidos</h3></div>
-            <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
-              {materiaisConsumidos.map((m, i) => <div key={i} className="flex justify-between"><span>{m.materialNome}</span><span>{m.quantidade} un - R$ {m.custo.toFixed(2)}</span></div>)}
-              <div className="pt-2 border-t font-bold flex justify-between"><span>Total:</span><span>R$ {materiaisConsumidos.reduce((s, m) => s + m.custo, 0).toFixed(2)}</span></div>
+            <div className="p-4 border-b bg-green-50 flex justify-between items-center">
+              <h3 className="font-semibold text-green-700">✅ Materiais Consumidos</h3>
+              <button onClick={() => { setShowMateriaisModal(false); onFinalizar?.(); }} className="text-green-600 hover:text-green-800"><X size={20} /></button>
             </div>
-            <div className="p-4 border-t"><button onClick={() => { setShowMateriaisModal(false); onFinalizar?.(); }} className="w-full bg-green-600 text-white py-2 rounded-lg">Fechar</button></div>
+            <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
+              {materiaisConsumidos.map((m, i) => (
+                <div key={i} className="flex justify-between items-center border-b pb-2">
+                  <span className="font-medium">{m.materialNome}</span>
+                  <span>{m.quantidade} un - R$ {m.custo.toFixed(2)}</span>
+                </div>
+              ))}
+              <div className="pt-2 border-t font-bold flex justify-between">
+                <span>Total:</span>
+                <span className="text-green-600">R$ {materiaisConsumidos.reduce((s, m) => s + m.custo, 0).toFixed(2)}</span>
+              </div>
+            </div>
+            <div className="p-4 border-t">
+              <button onClick={() => { setShowMateriaisModal(false); onFinalizar?.(); }} className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition">Fechar</button>
+            </div>
           </div>
         </div>
       )}
 
+      {/* Modal Visualização Imagem */}
       {imagemSelecionada && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50">
-          <button onClick={() => setImagemSelecionada(null)} className="absolute top-4 right-4 text-white"><X size={32} /></button>
-          <img src={imagemSelecionada.url} className="max-w-full max-h-full object-contain" />
+        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4">
+          <button onClick={() => setImagemSelecionada(null)} className="absolute top-4 right-4 text-white hover:text-gray-300 transition"><X size={32} /></button>
+          <img src={imagemSelecionada.url} alt="Exame" className="max-w-full max-h-full object-contain" />
         </div>
       )}
 
+      {/* Modal Upload Imagem */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-md">
-            <div className="p-4 border-b"><h3 className="font-semibold">📸 Adicionar Exame</h3></div>
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-semibold">📸 Adicionar Exame</h3>
+              <button onClick={() => setShowUploadModal(false)} className="text-gray-500 hover:text-gray-700"><X size={20} /></button>
+            </div>
             <div className="p-4">
-              {uploadPreview ? <img src={uploadPreview} className="w-full h-48 object-cover rounded-lg mb-3" /> : <label className="border-2 border-dashed rounded-lg p-8 text-center block cursor-pointer"><Upload className="mx-auto mb-2" /><input type="file" accept="image/*" onChange={(e) => { const f = e.target.files[0]; if (f) { const r = new FileReader(); r.onload = () => setUploadPreview(r.result); r.readAsDataURL(f); } }} className="hidden" /></label>}
+              {uploadPreview ? (
+                <img src={uploadPreview} className="w-full h-48 object-cover rounded-lg mb-3" />
+              ) : (
+                <label className="border-2 border-dashed rounded-lg p-8 text-center block cursor-pointer hover:border-blue-500 transition">
+                  <Upload className="mx-auto mb-2 text-gray-400" size={32} />
+                  <p className="text-gray-500">Clique para selecionar uma imagem</p>
+                  <p className="text-xs text-gray-400 mt-1">PNG, JPG, JPEG até 5MB</p>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={(e) => { 
+                      const f = e.target.files[0]; 
+                      if (f) { 
+                        const r = new FileReader(); 
+                        r.onload = () => setUploadPreview(r.result); 
+                        r.readAsDataURL(f); 
+                      } 
+                    }} 
+                    className="hidden" 
+                  />
+                </label>
+              )}
             </div>
             <div className="p-4 border-t flex gap-2">
-              {uploadPreview && <button onClick={() => { setUploading(true); setTimeout(() => { adicionarImagem({ id: Date.now(), url: uploadPreview, paciente_id: paciente.id, data: new Date().toISOString() }); setUploading(false); setShowUploadModal(false); setUploadPreview(null); showToast('Imagem salva!', 'success'); }, 1000); }} className="flex-1 bg-blue-600 text-white py-2 rounded-lg">Salvar</button>}
-              <button onClick={() => setShowUploadModal(false)} className="flex-1 bg-gray-200 py-2 rounded-lg">Cancelar</button>
+              {uploadPreview && (
+                <button onClick={handleAddImagem} className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition">
+                  {uploading ? 'Enviando...' : 'Salvar'}
+                </button>
+              )}
+              <button onClick={() => setShowUploadModal(false)} className="flex-1 bg-gray-200 py-2 rounded-lg hover:bg-gray-300 transition">Cancelar</button>
             </div>
           </div>
         </div>
