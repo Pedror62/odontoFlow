@@ -100,6 +100,7 @@ const INITIAL_DISTRIBUICAO_SALA = {
 };
 
 const INITIAL_HISTORICO_CONSUMO = [];
+const INITIAL_ATENDIMENTOS_PAUSADOS = [];
 
 export const MaterialProvider = ({ children }) => {
   // Forçar reset se o localStorage estiver corrompido
@@ -108,7 +109,6 @@ export const MaterialProvider = ({ children }) => {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Verificar se tem estoque suficiente
         const luvas = parsed.find(m => m.id === 1);
         if (luvas && luvas.estoque > 0) {
           return parsed;
@@ -117,7 +117,6 @@ export const MaterialProvider = ({ children }) => {
         console.log('Erro ao carregar materiais, resetando...');
       }
     }
-    // Resetar com dados iniciais
     localStorage.setItem('materiais', JSON.stringify(INITIAL_MATERIAIS));
     return INITIAL_MATERIAIS;
   });
@@ -131,7 +130,6 @@ export const MaterialProvider = ({ children }) => {
         console.log('Erro ao carregar materiais por procedimento, resetando...');
       }
     }
-    // Calcular custo total para cada procedimento
     const comCusto = { ...INITIAL_MATERIAIS_POR_PROCEDIMENTO };
     Object.keys(comCusto).forEach(procId => {
       let custoTotal = 0;
@@ -152,7 +150,6 @@ export const MaterialProvider = ({ children }) => {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Verificar se a Sala 01 tem luvas
         if (parsed['01']) {
           const luvas = parsed['01'].find(item => item.materialId === 1);
           if (luvas && luvas.quantidade > 0) {
@@ -171,6 +168,12 @@ export const MaterialProvider = ({ children }) => {
     const saved = localStorage.getItem('historicoConsumo');
     return saved ? JSON.parse(saved) : INITIAL_HISTORICO_CONSUMO;
   });
+  
+  // NOVO: Estado para atendimentos pausados
+  const [atendimentosPausados, setAtendimentosPausados] = useState(() => {
+    const saved = localStorage.getItem('atendimentosPausados');
+    return saved ? JSON.parse(saved) : INITIAL_ATENDIMENTOS_PAUSADOS;
+  });
 
   // Salvar no localStorage
   useEffect(() => {
@@ -188,6 +191,44 @@ export const MaterialProvider = ({ children }) => {
   useEffect(() => {
     localStorage.setItem('historicoConsumo', JSON.stringify(historicoConsumo));
   }, [historicoConsumo]);
+  
+  useEffect(() => {
+    localStorage.setItem('atendimentosPausados', JSON.stringify(atendimentosPausados));
+  }, [atendimentosPausados]);
+
+  // NOVA FUNÇÃO: Pausar atendimento
+  const pausarAtendimento = (atendimento) => {
+    console.log('📦 MaterialContext - pausarAtendimento chamado', atendimento);
+    
+    if (!atendimento || !atendimento.atendimento_id) {
+      console.error('Erro: atendimento inválido para pausar');
+      return;
+    }
+    
+    const novoPausado = {
+      id: Date.now(),
+      ...atendimento,
+      pausado_em: atendimento.pausado_em || new Date().toISOString()
+    };
+    
+    setAtendimentosPausados(prev => {
+      const existe = prev.some(p => p.atendimento_id === novoPausado.atendimento_id);
+      if (existe) {
+        console.log('Atendimento já está pausado');
+        return prev;
+      }
+      return [...prev, novoPausado];
+    });
+    
+    console.log('✅ Atendimento pausado com sucesso');
+  };
+
+  // NOVA FUNÇÃO: Retomar atendimento
+  const retomarAtendimento = (id) => {
+    console.log('📦 MaterialContext - retomarAtendimento chamado, id:', id);
+    setAtendimentosPausados(prev => prev.filter(p => p.id !== id && p.atendimento_id !== id));
+    console.log('✅ Atendimento retomado com sucesso');
+  };
 
   // Função para diagnosticar o estoque
   const diagnosticarEstoque = () => {
@@ -212,11 +253,10 @@ export const MaterialProvider = ({ children }) => {
     }
   };
 
-  // Função para normalizar o nome da sala (extrai apenas o número)
+  // Função para normalizar o nome da sala
   const normalizarSala = (sala) => {
     if (!sala) return '01';
     const salaStr = String(sala).trim().toLowerCase();
-    // Extrair apenas os números da string (ex: "sala 01" -> "01", "Sala 02" -> "02")
     const numeros = salaStr.match(/\d+/);
     if (numeros) {
       return numeros[0].padStart(2, '0');
@@ -239,20 +279,15 @@ export const MaterialProvider = ({ children }) => {
     return false;
   };
 
-  // Função para consumir materiais de um procedimento - VERSÃO CORRIGIDA
+  // Função para consumir materiais de um procedimento
   const consumirMateriais = (procedimentoId, sala, pacienteNome, dentistaNome) => {
-    // Normalizar o nome da sala (ex: "sala 01" -> "01")
     const salaKey = normalizarSala(sala);
     
-    console.log(`🔍 Consumindo materiais - Procedimento: ${procedimentoId}, Sala original: "${sala}", Sala normalizada: "${salaKey}"`);
-    console.log(`📋 Salas disponíveis:`, Object.keys(distribuicaoSala));
+    console.log(`🔍 Consumindo materiais - Procedimento: ${procedimentoId}, Sala: "${salaKey}"`);
     
-    // Garantir que a sala existe
     garantirSala(salaKey);
     
-    // Verificar se a sala existe após garantir
     if (!distribuicaoSala[salaKey]) {
-      console.log(`❌ Sala ${salaKey} não encontrada mesmo após tentativa de criação`);
       return { success: false, message: `Sala ${sala} não encontrada no sistema` };
     }
     
@@ -264,12 +299,9 @@ export const MaterialProvider = ({ children }) => {
     const consumo = [];
     let podeConsumir = true;
     
-    // Verificar se há material suficiente na sala
     for (const item of materiaisNecessarios.materiais) {
       const material = materiais.find(m => m.id === item.materialId);
       const materialNaSala = distribuicaoSala[salaKey].find(d => d.materialId === item.materialId);
-      
-      console.log(`📦 Verificando ${material?.nome}: Disponível ${materialNaSala?.quantidade || 0}, Necessário ${item.quantidade}`);
       
       if (!material) {
         podeConsumir = false;
@@ -291,22 +323,16 @@ export const MaterialProvider = ({ children }) => {
       });
     }
     
-    // Realizar consumo
     if (podeConsumir) {
-      console.log('✅ Materiais suficientes, realizando consumo...');
-      
-      // Atualizar estoque da sala
       const novaDistribuicao = { ...distribuicaoSala };
       for (const item of materiaisNecessarios.materiais) {
         const index = novaDistribuicao[salaKey].findIndex(d => d.materialId === item.materialId);
         if (index !== -1) {
           novaDistribuicao[salaKey][index].quantidade -= item.quantidade;
-          console.log(`📉 ${materiais.find(m => m.id === item.materialId)?.nome}: nova quantidade ${novaDistribuicao[salaKey][index].quantidade}`);
         }
       }
       setDistribuicaoSala(novaDistribuicao);
       
-      // Atualizar estoque geral
       const novosMateriais = [...materiais];
       for (const item of materiaisNecessarios.materiais) {
         const materialIndex = novosMateriais.findIndex(m => m.id === item.materialId);
@@ -316,7 +342,6 @@ export const MaterialProvider = ({ children }) => {
       }
       setMateriais(novosMateriais);
       
-      // Registrar histórico
       const novoHistorico = {
         id: Date.now(),
         data: new Date().toISOString(),
@@ -330,7 +355,6 @@ export const MaterialProvider = ({ children }) => {
       };
       setHistoricoConsumo([novoHistorico, ...historicoConsumo]);
       
-      console.log(`✅ Consumo realizado! Custo total: R$ ${novoHistorico.custoTotal.toFixed(2)}`);
       return { success: true, message: 'Materiais consumidos com sucesso!', consumo };
     }
     
@@ -345,10 +369,8 @@ export const MaterialProvider = ({ children }) => {
       return { success: false, message: `Estoque geral insuficiente de ${materialGeral?.nome || 'material'}` };
     }
     
-    // Garantir que a sala existe
     garantirSala(salaKey);
     
-    // Atualizar distribuição da sala
     const novaDistribuicao = { ...distribuicaoSala };
     const materialSala = novaDistribuicao[salaKey].find(d => d.materialId === materialId);
     if (materialSala) {
@@ -358,7 +380,6 @@ export const MaterialProvider = ({ children }) => {
     }
     setDistribuicaoSala(novaDistribuicao);
     
-    // Atualizar estoque geral
     const novosMateriais = [...materiais];
     const materialIndex = novosMateriais.findIndex(m => m.id === materialId);
     if (materialIndex !== -1) {
@@ -442,6 +463,7 @@ export const MaterialProvider = ({ children }) => {
     materiaisPorProcedimento,
     distribuicaoSala,
     historicoConsumo,
+    atendimentosPausados,
     consumirMateriais,
     reporMaterialSala,
     adicionarEstoque,
@@ -450,6 +472,8 @@ export const MaterialProvider = ({ children }) => {
     diagnosticarEstoque,
     normalizarSala,
     garantirSala,
+    pausarAtendimento,
+    retomarAtendimento,
     setMateriais,
     setMateriaisPorProcedimento,
     setDistribuicaoSala
