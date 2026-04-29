@@ -58,14 +58,6 @@ export default function DentistaDashboard() {
     setLoading(false);
   }, [agendamentos, user, filtroData]);
 
-  // Verificar se há atendimento pausado que precisa ser retomado
-  useEffect(() => {
-    const pausadoAtual = atendimentosPausados?.find(p => p.dentista === user?.nome);
-    if (pausadoAtual && !atendimentoAtivo) {
-      // Não faz nada automaticamente, aguarda o dentista clicar no card
-    }
-  }, [atendimentosPausados, user, atendimentoAtivo]);
-
   const handleLogout = () => {
     logout();
     showToast('Logout realizado com sucesso!', 'success');
@@ -113,6 +105,9 @@ export default function DentistaDashboard() {
   };
 
   const pausarAtendimento = () => {
+    console.log('🔴 PAUSAR ATENDIMENTO CHAMADO');
+    console.log('Atendimento ativo:', atendimentoAtivo);
+    
     if (!atendimentoAtivo) {
       showToast('Nenhum atendimento ativo para pausar', 'error');
       return;
@@ -130,13 +125,27 @@ export default function DentistaDashboard() {
       dentista: user?.nome
     };
     
+    console.log('Novo pausado:', novoPausado);
+    
+    // Salvar no contexto global
     pausarAtendimentoGlobal(novoPausado);
-    atualizarAgendamento({ ...atendimentoAtivo, status: 'pausado' });
+    
+    // Atualizar status do agendamento
+    atualizarAgendamento({ 
+      ...atendimentoAtivo, 
+      status: 'pausado' 
+    });
+    
+    // Limpar atendimento ativo
     setAtendimentoAtivo(null);
-    showToast('Atendimento pausado! Clique no card amarelo para retomar.', 'info');
+    
+    showToast(`Atendimento de ${novoPausado.paciente} pausado! Clique no card amarelo para retomar.`, 'info');
   };
 
   const retomarAtendimento = (pausado) => {
+    console.log('🟢 RETOMAR ATENDIMENTO CHAMADO');
+    console.log('Pausado:', pausado);
+    
     // IMPEDIR: Se já existe um atendimento ativo, não permite retomar outro
     if (atendimentoAtivo) {
       showToast(`Finalize ou pause ${atendimentoAtivo.paciente_nome} antes de retomar outro atendimento.`, 'error');
@@ -156,6 +165,7 @@ export default function DentistaDashboard() {
       atualizarAgendamento({ ...agendamento, status: 'em_andamento' });
     }
     
+    // Remover dos pausados
     retomarAtendimentoGlobal(pausado.id);
     showToast(`Atendimento de ${pausado.paciente} retomado!`, 'success');
   };
@@ -332,7 +342,6 @@ export default function DentistaDashboard() {
               meusAgendamentos.map(ag => {
                 const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === ag.id);
                 const isActive = atendimentoAtivo?.id === ag.id;
-                // Desabilitar clique se já há um atendimento ativo e não é o atual
                 const isDisabled = atendimentoAtivo && !isActive && !estaPausado;
                 
                 return (
