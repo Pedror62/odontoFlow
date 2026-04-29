@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, ChevronRight, LogOut, Activity, Users, ClipboardList, Play } from 'lucide-react';
+import { Calendar, Clock, ChevronRight, LogOut, Activity, Users, ClipboardList, Play, PauseCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useMaterial } from '../../contexts/MaterialContext';
@@ -30,7 +30,7 @@ export default function DentistaDashboard() {
   const [atendimentoAtivo, setAtendimentoAtivo] = useState(null);
   const [meusAgendamentos, setMeusAgendamentos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filtroData, setFiltroData] = useState('hoje'); // 'hoje', 'todos', 'data'
+  const [filtroData, setFiltroData] = useState('hoje');
 
   // Filtrar agendamentos do dentista logado
   useEffect(() => {
@@ -45,12 +45,10 @@ export default function DentistaDashboard() {
       return isDentista && naoConcluido;
     });
     
-    // Aplicar filtro de data
     if (filtroData === 'hoje') {
       filtrados = filtrados.filter(ag => ag.data === hoje);
     }
     
-    // Ordenar por data e horário
     filtrados.sort((a, b) => {
       if (a.data !== b.data) return a.data.localeCompare(b.data);
       return (a.horario || '00:00').localeCompare(b.horario || '00:00');
@@ -60,6 +58,14 @@ export default function DentistaDashboard() {
     setLoading(false);
   }, [agendamentos, user, filtroData]);
 
+  // Verificar se há atendimento pausado que precisa ser retomado
+  useEffect(() => {
+    const pausadoAtual = atendimentosPausados?.find(p => p.dentista === user?.nome);
+    if (pausadoAtual && !atendimentoAtivo) {
+      // Não faz nada automaticamente, aguarda o dentista clicar no card
+    }
+  }, [atendimentosPausados, user, atendimentoAtivo]);
+
   const handleLogout = () => {
     logout();
     showToast('Logout realizado com sucesso!', 'success');
@@ -67,8 +73,13 @@ export default function DentistaDashboard() {
   };
 
   const selecionarAtendimento = (agendamento) => {
-    if (atendimentoAtivo?.id === agendamento.id) return;
+    // IMPEDIR: Se já existe um atendimento ativo, não permite iniciar outro
+    if (atendimentoAtivo) {
+      showToast(`Você já está atendendo ${atendimentoAtivo.paciente_nome}. Finalize ou pause antes de iniciar outro.`, 'error');
+      return;
+    }
     
+    // Verificar se o atendimento está pausado
     const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === agendamento.id);
     if (estaPausado) {
       showToast('Este atendimento está pausado. Retome-o pelo card amarelo.', 'info');
@@ -77,6 +88,11 @@ export default function DentistaDashboard() {
     
     if (agendamento.status === 'concluido') {
       showToast('Este atendimento já foi concluído!', 'info');
+      return;
+    }
+    
+    if (agendamento.status === 'pausado') {
+      showToast('Este atendimento está pausado. Retome pelo card amarelo.', 'info');
       return;
     }
     
@@ -97,7 +113,10 @@ export default function DentistaDashboard() {
   };
 
   const pausarAtendimento = () => {
-    if (!atendimentoAtivo) return;
+    if (!atendimentoAtivo) {
+      showToast('Nenhum atendimento ativo para pausar', 'error');
+      return;
+    }
     
     const novoPausado = {
       id: Date.now(),
@@ -118,6 +137,12 @@ export default function DentistaDashboard() {
   };
 
   const retomarAtendimento = (pausado) => {
+    // IMPEDIR: Se já existe um atendimento ativo, não permite retomar outro
+    if (atendimentoAtivo) {
+      showToast(`Finalize ou pause ${atendimentoAtivo.paciente_nome} antes de retomar outro atendimento.`, 'error');
+      return;
+    }
+    
     const agendamento = meusAgendamentos.find(ag => ag.id === pausado.atendimento_id) || 
                         agendamentos.find(ag => ag.id === pausado.atendimento_id);
     
@@ -229,7 +254,13 @@ export default function DentistaDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-4">
-              {/* Filtro de data */}
+              {/* Indicador de atendimento ativo */}
+              {atendimentoAtivo && (
+                <div className="flex items-center gap-2 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
+                  <Activity size={14} className="animate-pulse" />
+                  <span>Atendendo: {atendimentoAtivo.paciente_nome}</span>
+                </div>
+              )}
               <select
                 value={filtroData}
                 onChange={(e) => setFiltroData(e.target.value)}
@@ -270,7 +301,7 @@ export default function DentistaDashboard() {
           <div className="bg-white rounded-lg shadow p-4">
             <div className="flex items-center justify-between">
               <div><p className="text-gray-500 text-sm">Pausados</p><p className="text-2xl font-bold text-yellow-600">{stats.pausados}</p></div>
-              <Clock className="text-yellow-500" size={32} />
+              <PauseCircle className="text-yellow-500" size={32} />
             </div>
           </div>
           <div className="bg-white rounded-lg shadow p-4">
@@ -301,8 +332,19 @@ export default function DentistaDashboard() {
               meusAgendamentos.map(ag => {
                 const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === ag.id);
                 const isActive = atendimentoAtivo?.id === ag.id;
+                // Desabilitar clique se já há um atendimento ativo e não é o atual
+                const isDisabled = atendimentoAtivo && !isActive && !estaPausado;
+                
                 return (
-                  <div key={ag.id} onClick={() => selecionarAtendimento(ag)} className={`bg-white rounded-lg shadow border p-4 mb-3 cursor-pointer transition hover:shadow-md ${isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''} ${estaPausado ? 'border-yellow-400 bg-yellow-50' : ''}`}>
+                  <div 
+                    key={ag.id} 
+                    onClick={() => !isDisabled && selecionarAtendimento(ag)} 
+                    className={`bg-white rounded-lg shadow border p-4 mb-3 transition hover:shadow-md 
+                      ${isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''} 
+                      ${estaPausado ? 'border-yellow-400 bg-yellow-50' : ''}
+                      ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'}
+                    `}
+                  >
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
@@ -322,6 +364,11 @@ export default function DentistaDashboard() {
                         </span>
                       </div>
                     </div>
+                    {isDisabled && (
+                      <div className="text-xs text-gray-400 mt-1 flex items-center gap-1">
+                        <Activity size={10} /> Aguardando finalizar {atendimentoAtivo?.paciente_nome}
+                      </div>
+                    )}
                     <div className="flex justify-end mt-2"><ChevronRight size={16} className="text-gray-400" /></div>
                   </div>
                 );
