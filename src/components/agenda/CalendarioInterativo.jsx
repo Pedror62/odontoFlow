@@ -50,22 +50,35 @@ export default function CalendarioInterativo({
   const [modoEdicao, setModoEdicao] = useState(false);
   const [agendamentoSelecionado, setAgendamentoSelecionado] = useState(null);
   const [showDetalhes, setShowDetalhes] = useState(false);
+  const [visualizacao, setVisualizacao] = useState('semanal'); // 'semanal' ou 'diaria'
 
-  // Obter data de início da semana (segunda-feira)
-  const getStartOfWeek = (date) => {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = (day === 0 ? 6 : day - 1);
-    d.setDate(d.getDate() - diff);
-    return d;
+  // Obter a data selecionada (para visualização diária)
+  const getDataSelecionada = () => {
+    return dataAtual;
   };
 
-  const startOfWeek = getStartOfWeek(dataAtual);
-  const diasSemana = Array.from({ length: 7 }, (_, i) => {
-    const day = new Date(startOfWeek);
-    day.setDate(startOfWeek.getDate() + i);
-    return day;
-  });
+  // Obter os dias da semana a partir da data atual
+  const getDiasDaSemana = () => {
+    const dias = [];
+    const startOfWeek = new Date(dataAtual);
+    const day = startOfWeek.getDay();
+    const diff = (day === 0 ? 6 : day - 1);
+    startOfWeek.setDate(startOfWeek.getDate() - diff);
+    
+    for (let i = 0; i < 7; i++) {
+      const dia = new Date(startOfWeek);
+      dia.setDate(startOfWeek.getDate() + i);
+      dias.push(dia);
+    }
+    return dias;
+  };
+
+  const diasSemana = getDiasDaSemana();
+
+  // Formatar data para comparação (YYYY-MM-DD)
+  const formatDateKey = (date) => {
+    return date.toISOString().split('T')[0];
+  };
 
   // Filtrar agendamentos
   const getAgendamentosFiltrados = () => {
@@ -85,7 +98,7 @@ export default function CalendarioInterativo({
   };
 
   const getAgendamentosPorDiaESala = (data, sala) => {
-    const dataStr = data.toISOString().split('T')[0];
+    const dataStr = formatDateKey(data);
     const filtrados = getAgendamentosFiltrados();
     return filtrados.filter(ag => ag.data === dataStr && ag.sala === sala);
   };
@@ -130,7 +143,7 @@ export default function CalendarioInterativo({
     
     const agendamentoAtualizado = {
       ...agendamentoOriginal,
-      data: data.toISOString().split('T')[0],
+      data: formatDateKey(data),
       horario: horario,
       sala: sala
     };
@@ -142,6 +155,18 @@ export default function CalendarioInterativo({
   // Navegação
   const hoje = () => {
     setDataAtual(new Date());
+  };
+
+  const diaAnterior = () => {
+    const newDate = new Date(dataAtual);
+    newDate.setDate(dataAtual.getDate() - 1);
+    setDataAtual(newDate);
+  };
+
+  const proximoDia = () => {
+    const newDate = new Date(dataAtual);
+    newDate.setDate(dataAtual.getDate() + 1);
+    setDataAtual(newDate);
   };
 
   const semanaAnterior = () => {
@@ -167,7 +192,7 @@ export default function CalendarioInterativo({
     
     const porStatus = {};
     for (const ag of (agendamentos || [])) {
-      if (diasSemana.some(dia => dia.toISOString().split('T')[0] === ag.data)) {
+      if (diasSemana.some(dia => formatDateKey(dia) === ag.data)) {
         porStatus[ag.status] = (porStatus[ag.status] || 0) + 1;
       }
     }
@@ -179,6 +204,10 @@ export default function CalendarioInterativo({
 
   const formatarData = (date) => {
     return date.toLocaleDateString('pt-BR', { weekday: 'short', day: 'numeric', month: 'short' });
+  };
+
+  const formatarDataCompleta = (date) => {
+    return date.toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   };
 
   const isHoje = (date) => {
@@ -209,30 +238,44 @@ export default function CalendarioInterativo({
       <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
         <div className="flex flex-wrap justify-between items-center gap-3">
           <div className="flex items-center gap-2">
-            <button 
-              onClick={semanaAnterior}
-              className="p-2 hover:bg-white rounded-lg transition shadow-sm"
-            >
-              <ChevronLeft size={20} />
-            </button>
-            <button 
-              onClick={hoje}
-              className="px-4 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm"
-            >
-              Hoje
-            </button>
-            <button 
-              onClick={proximaSemana}
-              className="p-2 hover:bg-white rounded-lg transition shadow-sm"
-            >
-              <ChevronRight size={20} />
-            </button>
-            <h2 className="text-lg font-bold ml-2">
-              {formatarData(diasSemana[0])} - {formatarData(diasSemana[6])}
-            </h2>
+            {/* Botões de navegação */}
+            <div className="flex items-center gap-1 border-r pr-3 mr-2">
+              <button onClick={semanaAnterior} className="p-2 hover:bg-white rounded-lg transition shadow-sm">
+                <ChevronLeft size={20} />
+              </button>
+              <button onClick={hoje} className="px-4 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm">
+                Hoje
+              </button>
+              <button onClick={proximaSemana} className="p-2 hover:bg-white rounded-lg transition shadow-sm">
+                <ChevronRight size={20} />
+              </button>
+            </div>
+            
+            {/* Indicador da semana atual */}
+            <div className="bg-white px-4 py-1.5 rounded-lg shadow-sm">
+              <span className="text-sm font-medium">
+                {formatarData(diasSemana[0])} - {formatarData(diasSemana[6])}
+              </span>
+            </div>
           </div>
           
           <div className="flex gap-2">
+            {/* Alternar visualização */}
+            <div className="flex bg-white rounded-lg shadow-sm overflow-hidden">
+              <button
+                onClick={() => setVisualizacao('semanal')}
+                className={`px-3 py-1.5 text-sm transition ${visualizacao === 'semanal' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}
+              >
+                Semanal
+              </button>
+              <button
+                onClick={() => setVisualizacao('diaria')}
+                className={`px-3 py-1.5 text-sm transition ${visualizacao === 'diaria' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}
+              >
+                Diária
+              </button>
+            </div>
+            
             {/* Zoom */}
             <div className="flex items-center gap-1 bg-white rounded-lg shadow-sm px-2">
               <button onClick={() => setZoom(Math.max(0.8, zoom - 0.1))} className="p-1 hover:bg-gray-100 rounded">
@@ -301,7 +344,7 @@ export default function CalendarioInterativo({
         </div>
       </div>
 
-      {/* Calendário Principal com Zoom */}
+      {/* Calendário Principal */}
       <div className="overflow-x-auto" style={{ fontSize: `${0.875 * zoom}rem` }}>
         <div className="min-w-[1000px]">
           {/* Cabeçalho com dias */}
@@ -315,33 +358,78 @@ export default function CalendarioInterativo({
               </div>
             ))}
             
-            {/* Linhas de horário */}
+            {/* Para cada horário */}
             {HORARIOS.map(horario => (
               <React.Fragment key={horario}>
                 <div className="p-2 border-b text-xs text-gray-500 text-right pr-3 bg-gray-50 sticky left-0 z-10 font-mono">
                   {horario}
                 </div>
                 {salas.map(sala => {
-                  return (
-                    <div 
-                      key={`${sala}-${horario}`}
-                      onDragOver={handleDragOver}
-                      onDrop={(e) => handleDrop(dataAtual, horario, sala, e)}
-                      className="border-b border-l p-1 min-h-[70px] cursor-pointer hover:bg-blue-50 transition relative group"
-                    >
-                      {/* Mostrar agendamentos do dia */}
-                      {diasSemana.map((dia, idx) => {
-                        const agendamento = getAgendamentoNoHorario(
-                          getAgendamentosPorDiaESala(dia, sala),
-                          horario
-                        );
-                        if (!agendamento) return null;
-                        
-                        const isDiaHoje = isHoje(dia);
-                        
-                        return (
+                  // Para visualização semanal, mostrar todos os dias
+                  if (visualizacao === 'semanal') {
+                    return (
+                      <div 
+                        key={`${sala}-${horario}`}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(dataAtual, horario, sala, e)}
+                        className="border-b border-l p-1 min-h-[70px] hover:bg-blue-50 transition relative"
+                      >
+                        {diasSemana.map((dia, idx) => {
+                          const agendamento = getAgendamentoNoHorario(
+                            getAgendamentosPorDiaESala(dia, sala),
+                            horario
+                          );
+                          if (!agendamento) return null;
+                          
+                          return (
+                            <div
+                              key={`${agendamento.id}-${idx}`}
+                              draggable={modoEdicao}
+                              onDragStart={(e) => handleDragStart(agendamento, e)}
+                              onDragEnd={handleDragEnd}
+                              onClick={() => {
+                                setAgendamentoSelecionado(agendamento);
+                                setShowDetalhes(true);
+                              }}
+                              className={`${STATUS_CONFIG[agendamento.status]?.bg || STATUS_CONFIG.agendado.bg} 
+                                border-l-4 ${STATUS_CONFIG[agendamento.status]?.border || STATUS_CONFIG.agendado.border} 
+                                rounded-lg p-2 text-xs cursor-pointer hover:shadow-md transition-all 
+                                ${modoEdicao ? 'cursor-move' : 'cursor-pointer'}
+                                mb-1 relative`}
+                            >
+                              <div className="flex justify-between items-start">
+                                <span className="font-semibold truncate">{agendamento.paciente_nome}</span>
+                                <span className="text-[10px] opacity-70">{STATUS_CONFIG[agendamento.status]?.icon}</span>
+                              </div>
+                              <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-1">
+                                <Stethoscope size={10} />
+                                <span className="truncate">{agendamento.procedimento_nome}</span>
+                              </div>
+                              <div className="flex justify-between items-center mt-1 text-[10px] text-gray-400">
+                                <span>{agendamento.dentista_nome?.split(' ')[0]}</span>
+                                <span>{formatarData(dia)}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  } else {
+                    // Visualização diária
+                    const agendamento = getAgendamentoNoHorario(
+                      getAgendamentosPorDiaESala(dataAtual, sala),
+                      horario
+                    );
+                    
+                    return (
+                      <div 
+                        key={`${sala}-${horario}`}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(dataAtual, horario, sala, e)}
+                        className="border-b border-l p-1 min-h-[70px] hover:bg-blue-50 transition relative"
+                      >
+                        {agendamento && (
                           <div
-                            key={`${agendamento.id}-${idx}`}
                             draggable={modoEdicao}
                             onDragStart={(e) => handleDragStart(agendamento, e)}
                             onDragEnd={handleDragEnd}
@@ -353,38 +441,27 @@ export default function CalendarioInterativo({
                               border-l-4 ${STATUS_CONFIG[agendamento.status]?.border || STATUS_CONFIG.agendado.border} 
                               rounded-lg p-2 text-xs cursor-pointer hover:shadow-md transition-all 
                               ${modoEdicao ? 'cursor-move' : 'cursor-pointer'}
-                              mb-1 relative
-                              ${isDiaHoje ? 'ring-1 ring-blue-300' : ''}`}
-                            style={{ 
-                              transform: `scale(1)`,
-                              transition: 'all 0.2s'
-                            }}
+                              h-full flex flex-col justify-between`}
                           >
-                            <div className="flex justify-between items-start">
-                              <span className="font-semibold truncate">{agendamento.paciente_nome}</span>
-                              <span className="text-[10px] opacity-70">{STATUS_CONFIG[agendamento.status]?.icon}</span>
-                            </div>
-                            <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-1">
-                              <Stethoscope size={10} />
-                              <span className="truncate">{agendamento.procedimento_nome}</span>
+                            <div>
+                              <div className="flex justify-between items-start">
+                                <span className="font-semibold truncate">{agendamento.paciente_nome}</span>
+                                <span className="text-[10px] opacity-70">{STATUS_CONFIG[agendamento.status]?.icon}</span>
+                              </div>
+                              <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-1">
+                                <Stethoscope size={10} />
+                                <span className="truncate">{agendamento.procedimento_nome}</span>
+                              </div>
                             </div>
                             <div className="flex justify-between items-center mt-1 text-[10px] text-gray-400">
                               <span>{agendamento.dentista_nome?.split(' ')[0]}</span>
-                              <span>{formatarData(dia)}</span>
+                              <span>{agendamento.horario}</span>
                             </div>
-                            {isDiaHoje && (
-                              <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full"></div>
-                            )}
-                            {modoEdicao && (
-                              <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition">
-                                <span className="text-[10px] bg-gray-800 text-white px-1 rounded-full">⋮⋮</span>
-                              </div>
-                            )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  );
+                        )}
+                      </div>
+                    );
+                  }
                 })}
               </React.Fragment>
             ))}
@@ -392,7 +469,16 @@ export default function CalendarioInterativo({
         </div>
       </div>
 
-      {/* Dicas de produtividade - Rodapé */}
+      {/* Informação da data atual na visualização diária */}
+      {visualizacao === 'diaria' && (
+        <div className="p-3 bg-blue-50 border-t text-center">
+          <span className="text-sm text-blue-700">
+            📅 Visualizando: {formatarDataCompleta(dataAtual)}
+          </span>
+        </div>
+      )}
+
+      {/* Dicas de produtividade */}
       <div className="p-3 border-t bg-gradient-to-r from-gray-50 to-white">
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-3">
@@ -402,31 +488,17 @@ export default function CalendarioInterativo({
             </span>
           </div>
           <div className="flex gap-4">
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-blue-100 rounded border-l-2 border-blue-500"></div>
-              <span className="text-[10px]">Agendado</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-green-100 rounded border-l-2 border-green-500"></div>
-              <span className="text-[10px]">Confirmado</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-yellow-100 rounded border-l-2 border-yellow-500"></div>
-              <span className="text-[10px]">Em andamento</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-orange-100 rounded border-l-2 border-orange-500"></div>
-              <span className="text-[10px]">Pausado</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-gray-100 rounded border-l-2 border-gray-500"></div>
-              <span className="text-[10px]">Concluído</span>
-            </div>
+            {Object.entries(STATUS_CONFIG).slice(0, 5).map(([key, config]) => (
+              <div key={key} className="flex items-center gap-1">
+                <div className={`w-3 h-3 ${config.bg} rounded border-l-2 ${config.border}`}></div>
+                <span className="text-[10px]">{config.label}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* Modal de Detalhes do Agendamento */}
+      {/* Modal de Detalhes */}
       {showDetalhes && agendamentoSelecionado && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
