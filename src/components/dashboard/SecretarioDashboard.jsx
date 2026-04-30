@@ -4,13 +4,13 @@ import {
   Bell, Search, UserPlus, Clock, CheckCircle, 
   XCircle, AlertCircle, Phone, Mail, MapPin,
   CreditCard, Stethoscope, Calendar, ChevronRight,
-  Plus, Edit, Trash2, Save, X
+  Plus, Edit, Trash2, Save, X, Move, Maximize2
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { showToast } from '../Toast';
-import AgendaCalendar from '../agenda/AgendaCalendar';
+import CalendarioInterativo from '../agenda/CalendarioInterativo';
 
 export default function SecretarioDashboard() {
   const { logout, user } = useAuth();
@@ -24,7 +24,8 @@ export default function SecretarioDashboard() {
     dentistas,
     planos,
     agendamentos,
-    adicionarAgendamento
+    adicionarAgendamento,
+    atualizarAgendamento
   } = useData();
   
   const [activeTab, setActiveTab] = useState('agenda');
@@ -33,6 +34,9 @@ export default function SecretarioDashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [pacienteSelecionado, setPacienteSelecionado] = useState(null);
   const [pacienteEdit, setPacienteEdit] = useState(null);
+  const [visualizacao, setVisualizacao] = useState('semanal');
+  const [salaSelecionada, setSalaSelecionada] = useState('todas');
+  const [dentistaSelecionado, setDentistaSelecionado] = useState('todos');
   
   // Estado para cadastro rápido
   const [quickPaciente, setQuickPaciente] = useState({
@@ -61,17 +65,14 @@ export default function SecretarioDashboard() {
   // Atalhos de teclado
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Ctrl + N = Novo Agendamento
       if (e.ctrlKey && e.key === 'n') {
         e.preventDefault();
         setShowQuickAgendamento(true);
       }
-      // Ctrl + P = Novo Paciente
       if (e.ctrlKey && e.key === 'p') {
         e.preventDefault();
         setShowQuickPaciente(true);
       }
-      // Escape = Fechar modais
       if (e.key === 'Escape') {
         setShowQuickPaciente(false);
         setShowQuickAgendamento(false);
@@ -103,11 +104,9 @@ export default function SecretarioDashboard() {
     adicionarPaciente(novoPaciente);
     showToast(`Paciente ${quickPaciente.nome} cadastrado com sucesso!`, 'success');
     
-    // Limpar formulário
     setQuickPaciente({ nome: '', telefone: '', email: '', convenio: 'Particular' });
     setShowQuickPaciente(false);
     
-    // Se tiver no modo agendamento, já selecionar o paciente
     if (showQuickAgendamento) {
       setQuickAgendamento({ ...quickAgendamento, paciente_id: novoPaciente.id });
       setPacienteSelecionado(novoPaciente);
@@ -125,7 +124,6 @@ export default function SecretarioDashboard() {
     const paciente = pacientes.find(p => p.id == quickAgendamento.paciente_id);
     const procedimento = procedimentos.find(p => p.id == quickAgendamento.procedimento_id);
     const dentista = dentistas.find(d => d.id == quickAgendamento.dentista_id);
-    const plano = planos.find(p => p.id === 3); // Particular padrão
     
     const valorComDesconto = procedimento?.valor || 0;
     
@@ -152,7 +150,6 @@ export default function SecretarioDashboard() {
     showToast(`Agendamento para ${paciente?.nome} realizado com sucesso!`, 'success');
     setShowQuickAgendamento(false);
     
-    // Limpar
     setQuickAgendamento({
       paciente_id: '',
       procedimento_id: '',
@@ -164,7 +161,20 @@ export default function SecretarioDashboard() {
     setPacienteSelecionado(null);
   };
 
-  // Próximos atendimentos (próximas 4 horas)
+  // Função para mover agendamento (drag & drop)
+  const handleAgendamentoMove = (agendamentoAtualizado) => {
+    atualizarAgendamento(agendamentoAtualizado);
+    showToast(`Agendamento remarcado com sucesso!`, 'success');
+  };
+
+  // Função para editar agendamento
+  const handleAgendamentoClick = (agendamento) => {
+    console.log('Agendamento selecionado:', agendamento);
+    // Abrir modal de edição ou detalhes
+    showToast(`Clique para editar: ${agendamento.paciente_nome}`, 'info');
+  };
+
+  // Próximos atendimentos
   const agora = new Date();
   const horaAtual = agora.getHours();
   const proximosAtendimentos = agendamentos
@@ -203,7 +213,6 @@ export default function SecretarioDashboard() {
             </div>
             
             <div className="flex items-center gap-3">
-              {/* Indicadores Rápidos */}
               <div className="hidden md:flex gap-2">
                 <div className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
                   <CheckCircle size={12} /> {stats.agendamentosHoje} hoje
@@ -293,7 +302,7 @@ export default function SecretarioDashboard() {
             )}
           </div>
           
-          {/* Resultados da Busca - Mostra enquanto digita */}
+          {/* Resultados da Busca */}
           {searchTerm && pacientesFiltrados.length > 0 && (
             <div className="mt-2 bg-white rounded-xl shadow-lg border overflow-hidden">
               {pacientesFiltrados.slice(0, 5).map(paciente => (
@@ -338,15 +347,41 @@ export default function SecretarioDashboard() {
           </div>
         </div>
 
-        {/* Calendário de Agenda */}
-        <div className="bg-white rounded-xl shadow-sm border">
-          <div className="p-4 border-b flex justify-between items-center">
-            <h2 className="font-semibold">📅 Agenda de Hoje</h2>
-            <p className="text-xs text-gray-500">{new Date().toLocaleDateString('pt-BR')}</p>
+        {/* Calendário Interativo - NOVO! */}
+        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-white">
+            <div className="flex justify-between items-center flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <CalendarPlus className="text-blue-600" size={20} />
+                <h2 className="font-semibold text-lg">📅 Agenda Interativa</h2>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setVisualizacao('semanal')}
+                  className={`px-3 py-1 text-sm rounded-lg transition ${visualizacao === 'semanal' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                >
+                  Semanal
+                </button>
+                <button
+                  onClick={() => setVisualizacao('diaria')}
+                  className={`px-3 py-1 text-sm rounded-lg transition ${visualizacao === 'diaria' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                >
+                  Diária
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              💡 Dica: Clique e arraste os cards para reagendar consultas
+            </p>
           </div>
-          <AgendaCalendar 
+          
+          <CalendarioInterativo
             agendamentos={agendamentos}
-            onSelectAgendamento={(ag) => console.log('Selecionado:', ag)}
+            dentistas={dentistas}
+            salas={['01', '02', '03']}
+            visualizacao={visualizacao}
+            onAgendamentoClick={handleAgendamentoClick}
+            onAgendamentoMove={handleAgendamentoMove}
           />
         </div>
       </div>
@@ -445,7 +480,6 @@ export default function SecretarioDashboard() {
             </div>
             
             <div className="p-5 space-y-4">
-              {/* Seleção de Paciente */}
               <div>
                 <label className="block text-sm font-medium mb-1">Paciente *</label>
                 <div className="flex gap-2">
