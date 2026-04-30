@@ -4,7 +4,7 @@ import {
   AlertCircle, Calendar, ChevronLeft, ChevronRight, 
   Filter, Download, Printer, Eye, Edit, Trash2, 
   MoreVertical, MapPin, Phone, Mail, DollarSign,
-  Plus, Minus, ZoomIn, ZoomOut, RefreshCw
+  Plus, Minus, ZoomIn, ZoomOut, RefreshCw, X
 } from 'lucide-react';
 import { showToast } from '../Toast';
 
@@ -69,7 +69,7 @@ export default function CalendarioInterativo({
 
   // Filtrar agendamentos
   const getAgendamentosFiltrados = () => {
-    let filtrados = [...agendamentos];
+    let filtrados = [...(agendamentos || [])];
     
     if (filtroDentista !== 'todos') {
       filtrados = filtrados.filter(ag => ag.dentista_nome === filtroDentista);
@@ -109,7 +109,7 @@ export default function CalendarioInterativo({
     e.preventDefault();
   };
 
-  const handleDrop = async (data, horario, sala, e) => {
+  const handleDrop = (data, horario, sala, e) => {
     e.preventDefault();
     if (!modoEdicao) {
       showToast('Ative o modo edição para mover agendamentos', 'info');
@@ -158,18 +158,19 @@ export default function CalendarioInterativo({
 
   // Estatísticas da semana
   const estatisticasSemana = () => {
-    const total = diasSemana.reduce((sum, dia) => {
-      return sum + salas.reduce((sSum, sala) => {
-        return sSum + getAgendamentosPorDiaESala(dia, sala).length;
-      }, 0);
-    }, 0);
+    let total = 0;
+    for (const dia of diasSemana) {
+      for (const sala of salas) {
+        total += getAgendamentosPorDiaESala(dia, sala).length;
+      }
+    }
     
     const porStatus = {};
-    agendamentos.forEach(ag => {
+    for (const ag of (agendamentos || [])) {
       if (diasSemana.some(dia => dia.toISOString().split('T')[0] === ag.data)) {
         porStatus[ag.status] = (porStatus[ag.status] || 0) + 1;
       }
-    });
+    }
     
     return { total, porStatus };
   };
@@ -189,7 +190,9 @@ export default function CalendarioInterativo({
   const dicas = [
     { icone: '💡', texto: 'Arraste os cards para remarcar consultas' },
     { icone: '🎯', texto: 'Use filtros para visualizar apenas um dentista' },
-    { icone: '⚡', texto: 'Ative o modo edição para mover agendamentos' }
+    { icone: '⚡', texto: 'Ative o modo edição para mover agendamentos' },
+    { icone: '📅', texto: 'Clique em um card para ver detalhes completos' },
+    { icone: '🔍', texto: 'Use o zoom para melhor visualização' }
   ];
   const [dicaAtual, setDicaAtual] = useState(0);
 
@@ -263,7 +266,7 @@ export default function CalendarioInterativo({
               className="px-3 py-1.5 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
             >
               <option value="todos">👨‍⚕️ Todos dentistas</option>
-              {dentistas.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>)}
+              {dentistas?.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>)}
             </select>
             
             <select
@@ -319,14 +322,6 @@ export default function CalendarioInterativo({
                   {horario}
                 </div>
                 {salas.map(sala => {
-                  const agendamentosNoDia = diasSemana.map(dia => ({
-                    dia,
-                    agendamento: getAgendamentoNoHorario(
-                      getAgendamentosPorDiaESala(dia, sala),
-                      horario
-                    )
-                  }));
-                  
                   return (
                     <div 
                       key={`${sala}-${horario}`}
@@ -334,45 +329,60 @@ export default function CalendarioInterativo({
                       onDrop={(e) => handleDrop(dataAtual, horario, sala, e)}
                       className="border-b border-l p-1 min-h-[70px] cursor-pointer hover:bg-blue-50 transition relative group"
                     >
-                      {agendamentosNoDia.map(({ dia, agendamento }) => agendamento && (
-                        <div
-                          key={agendamento.id}
-                          draggable={modoEdicao}
-                          onDragStart={(e) => handleDragStart(agendamento, e)}
-                          onDragEnd={handleDragEnd}
-                          onClick={() => {
-                            setAgendamentoSelecionado(agendamento);
-                            setShowDetalhes(true);
-                          }}
-                          className={`${STATUS_CONFIG[agendamento.status]?.bg || STATUS_CONFIG.agendado.bg} 
-                            border-l-4 ${STATUS_CONFIG[agendamento.status]?.border || STATUS_CONFIG.agendado.border} 
-                            rounded-lg p-2 text-xs cursor-pointer hover:shadow-md transition-all 
-                            ${modoEdicao ? 'cursor-move' : 'cursor-pointer'}
-                            mb-1`}
-                          style={{ 
-                            transform: `scale(1)`,
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          <div className="flex justify-between items-start">
-                            <span className="font-semibold truncate">{agendamento.paciente_nome}</span>
-                            <span className="text-[10px] opacity-70">{STATUS_CONFIG[agendamento.status]?.icon}</span>
-                          </div>
-                          <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-1">
-                            <Stethoscope size={10} />
-                            <span className="truncate">{agendamento.procedimento_nome}</span>
-                          </div>
-                          <div className="flex justify-between items-center mt-1 text-[10px] text-gray-400">
-                            <span>{agendamento.dentista_nome?.split(' ')[0]}</span>
-                            <span>{formatarData(dia).split(' ')[0]}</span>
-                          </div>
-                          {modoEdicao && (
-                            <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition">
-                              <span className="text-[10px] bg-gray-800 text-white px-1 rounded">⋮⋮</span>
+                      {/* Mostrar agendamentos do dia */}
+                      {diasSemana.map((dia, idx) => {
+                        const agendamento = getAgendamentoNoHorario(
+                          getAgendamentosPorDiaESala(dia, sala),
+                          horario
+                        );
+                        if (!agendamento) return null;
+                        
+                        const isDiaHoje = isHoje(dia);
+                        
+                        return (
+                          <div
+                            key={`${agendamento.id}-${idx}`}
+                            draggable={modoEdicao}
+                            onDragStart={(e) => handleDragStart(agendamento, e)}
+                            onDragEnd={handleDragEnd}
+                            onClick={() => {
+                              setAgendamentoSelecionado(agendamento);
+                              setShowDetalhes(true);
+                            }}
+                            className={`${STATUS_CONFIG[agendamento.status]?.bg || STATUS_CONFIG.agendado.bg} 
+                              border-l-4 ${STATUS_CONFIG[agendamento.status]?.border || STATUS_CONFIG.agendado.border} 
+                              rounded-lg p-2 text-xs cursor-pointer hover:shadow-md transition-all 
+                              ${modoEdicao ? 'cursor-move' : 'cursor-pointer'}
+                              mb-1 relative
+                              ${isDiaHoje ? 'ring-1 ring-blue-300' : ''}`}
+                            style={{ 
+                              transform: `scale(1)`,
+                              transition: 'all 0.2s'
+                            }}
+                          >
+                            <div className="flex justify-between items-start">
+                              <span className="font-semibold truncate">{agendamento.paciente_nome}</span>
+                              <span className="text-[10px] opacity-70">{STATUS_CONFIG[agendamento.status]?.icon}</span>
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-1">
+                              <Stethoscope size={10} />
+                              <span className="truncate">{agendamento.procedimento_nome}</span>
+                            </div>
+                            <div className="flex justify-between items-center mt-1 text-[10px] text-gray-400">
+                              <span>{agendamento.dentista_nome?.split(' ')[0]}</span>
+                              <span>{formatarData(dia)}</span>
+                            </div>
+                            {isDiaHoje && (
+                              <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full"></div>
+                            )}
+                            {modoEdicao && (
+                              <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition">
+                                <span className="text-[10px] bg-gray-800 text-white px-1 rounded-full">⋮⋮</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })}
@@ -387,7 +397,7 @@ export default function CalendarioInterativo({
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-3">
             <span className="text-gray-400">💡 Dica:</span>
-            <span className="text-gray-600 animate-pulse">
+            <span className="text-gray-600">
               {dicas[dicaAtual].icone} {dicas[dicaAtual].texto}
             </span>
           </div>
@@ -419,8 +429,8 @@ export default function CalendarioInterativo({
       {/* Modal de Detalhes do Agendamento */}
       {showDetalhes && agendamentoSelecionado && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in zoom-in duration-200">
-            <div className={`p-5 border-b ${STATUS_CONFIG[agendamentoSelecionado.status]?.bg || 'bg-gray-50'}`}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className={`p-5 border-b ${STATUS_CONFIG[agendamentoSelecionado.status]?.bg || 'bg-gray-50'} rounded-t-2xl`}>
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   <span className="text-2xl">{STATUS_CONFIG[agendamentoSelecionado.status]?.icon}</span>
@@ -470,7 +480,7 @@ export default function CalendarioInterativo({
               )}
             </div>
             
-            <div className="p-5 border-t bg-gray-50 flex gap-3">
+            <div className="p-5 border-t bg-gray-50 flex gap-3 rounded-b-2xl">
               <button
                 onClick={() => {
                   onAgendamentoEdit?.(agendamentoSelecionado);
@@ -482,8 +492,10 @@ export default function CalendarioInterativo({
               </button>
               <button
                 onClick={() => {
-                  onAgendamentoDelete?.(agendamentoSelecionado.id);
-                  setShowDetalhes(false);
+                  if (confirm('Tem certeza que deseja cancelar este agendamento?')) {
+                    onAgendamentoDelete?.(agendamentoSelecionado.id);
+                    setShowDetalhes(false);
+                  }
                 }}
                 className="flex-1 bg-red-600 text-white py-2 rounded-xl hover:bg-red-700 transition flex items-center justify-center gap-2"
               >
