@@ -3,7 +3,8 @@ import {
   Calendar, Clock, ChevronRight, LogOut, Activity, Users, ClipboardList, 
   Play, PauseCircle, CheckCircle, XCircle, AlertCircle, Calendar as CalendarIcon, 
   ArrowRight, ArrowLeft, Eye, Search, Download, Sun, Moon, TrendingUp, 
-  AlarmClock, CheckCheck, Timer, User
+  AlarmClock, CheckCheck, Timer, User, History, Clock as ClockIcon,
+  Zap, Bell, Info
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
@@ -22,7 +23,8 @@ export default function DentistaDashboard() {
     atualizarAgendamento,
     adicionarAgendamento,
     pacientes,
-    procedimentos
+    procedimentos,
+    prontuarios
   } = useData();
   
   const {
@@ -37,6 +39,10 @@ export default function DentistaDashboard() {
   const [modalVisualizacao, setModalVisualizacao] = useState(null);
   const [buscaTermo, setBuscaTermo] = useState('');
   const [temaEscuro, setTemaEscuro] = useState(false);
+  const [tooltipInfo, setTooltipInfo] = useState(null);
+  const [historicoRapido, setHistoricoRapido] = useState(null);
+  const [tempoAtendimento, setTempoAtendimento] = useState(0);
+  const [timerAtivo, setTimerAtivo] = useState(false);
   
   // Obter datas
   const hoje = new Date().toISOString().split('T')[0];
@@ -47,13 +53,36 @@ export default function DentistaDashboard() {
   ontem.setDate(ontem.getDate() - 1);
   const ontemStr = ontem.toISOString().split('T')[0];
   
-  // Separar agendamentos por data
   const [agendamentosHoje, setAgendamentosHoje] = useState([]);
   const [agendamentosAmanha, setAgendamentosAmanha] = useState([]);
   const [agendamentosOntem, setAgendamentosOntem] = useState([]);
   const [agendamentosConcluidos, setAgendamentosConcluidos] = useState([]);
 
-  // Carregar e separar agendamentos
+  // Timer do atendimento ativo
+  useEffect(() => {
+    let timer;
+    if (atendimentoAtivo && !timerAtivo) {
+      setTimerAtivo(true);
+      timer = setInterval(() => {
+        setTempoAtendimento(prev => prev + 1);
+      }, 1000);
+    } else if (!atendimentoAtivo) {
+      setTempoAtendimento(0);
+      setTimerAtivo(false);
+    }
+    return () => clearInterval(timer);
+  }, [atendimentoAtivo]);
+
+  const formatarTempo = (segundos) => {
+    const horas = Math.floor(segundos / 3600);
+    const minutos = Math.floor((segundos % 3600) / 60);
+    const secs = segundos % 60;
+    if (horas > 0) return `${horas}h ${minutos}m`;
+    if (minutos > 0) return `${minutos}m ${secs}s`;
+    return `${secs}s`;
+  };
+
+  // Carregar agendamentos
   useEffect(() => {
     if (!agendamentos) return;
     
@@ -78,40 +107,31 @@ export default function DentistaDashboard() {
     setLoading(false);
   }, [agendamentos, user]);
 
-  // Função para filtrar por busca
-  const filtrarPorBusca = (lista) => {
-    if (!buscaTermo) return lista;
-    const termo = buscaTermo.toLowerCase();
-    return lista.filter(ag => 
-      ag.paciente_nome?.toLowerCase().includes(termo) ||
-      ag.procedimento_nome?.toLowerCase().includes(termo) ||
-      ag.sala?.includes(termo)
-    );
-  };
-
-  // Função para verificar atraso (horário já passou)
-  const verificarAtraso = (horario) => {
+  // Calcular prioridade (baseado no horário)
+  const calcularPrioridade = (horario) => {
     const agora = new Date();
     const horaAtual = agora.getHours();
     const minutoAtual = agora.getMinutes();
     const [horaAg, minutoAg] = horario.split(':').map(Number);
     
-    if (horaAg < horaAtual || (horaAg === horaAtual && minutoAg < minutoAtual)) {
-      return true;
-    }
-    return false;
+    const diffMinutos = (horaAg - horaAtual) * 60 + (minutoAg - minutoAtual);
+    
+    if (diffMinutos < 0) return { nivel: 'urgente', cor: 'bg-red-100 border-red-500', texto: 'Atrasado', icone: '🚨' };
+    if (diffMinutos < 15) return { nivel: 'alta', cor: 'bg-orange-100 border-orange-500', texto: 'Em breve', icone: '⚠️' };
+    if (diffMinutos < 60) return { nivel: 'media', cor: 'bg-yellow-100 border-yellow-400', texto: 'Próximo', icone: '⏰' };
+    return { nivel: 'normal', cor: 'bg-white', texto: 'Agendado', icone: '📅' };
   };
 
-  // Estatísticas do dia
-  const resumoDia = {
-    total: agendamentosHoje.length,
-    concluidos: agendamentosConcluidos.filter(ag => ag.data === hoje).length,
-    em_andamento: atendimentoAtivo ? 1 : 0,
-    pausados: atendimentosPausados?.filter(p => p.dentista === user?.nome && new Date(p.pausado_em).toDateString() === new Date().toDateString()).length || 0,
-    atrasados: agendamentosHoje.filter(ag => verificarAtraso(ag.horario)).length,
-    taxaConclusao: agendamentosHoje.length > 0 
-      ? Math.round((agendamentosConcluidos.filter(ag => ag.data === hoje).length / agendamentosHoje.length) * 100) 
-      : 0
+  // Buscar histórico rápido do paciente
+  const buscarHistoricoRapido = (pacienteId, pacienteNome) => {
+    const historicoKey = `prontuario_${pacienteId || pacienteNome}`;
+    const saved = localStorage.getItem(historicoKey);
+    if (saved) {
+      const historico = JSON.parse(saved);
+      setHistoricoRapido(historico.slice(0, 3)); // últimos 3 registros
+    } else {
+      setHistoricoRapido([]);
+    }
   };
 
   const handleLogout = () => {
@@ -132,11 +152,6 @@ export default function DentistaDashboard() {
       return;
     }
     
-    if (agendamento.status === 'concluido') {
-      showToast('Este atendimento já foi concluído!', 'info');
-      return;
-    }
-    
     const pacienteCompleto = pacientes.find(p => p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome);
     
     setAtendimentoAtivo({
@@ -145,20 +160,8 @@ export default function DentistaDashboard() {
       status: 'em_andamento'
     });
     
-    atualizarAgendamento({
-      ...agendamento,
-      status: 'em_andamento'
-    });
-    
+    atualizarAgendamento({ ...agendamento, status: 'em_andamento' });
     showToast(`Atendimento de ${agendamento.paciente_nome} iniciado!`, 'success');
-  };
-
-  const visualizarAgendamento = (agendamento) => {
-    const pacienteCompleto = pacientes.find(p => p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome);
-    setModalVisualizacao({
-      ...agendamento,
-      paciente: pacienteCompleto || { nome: agendamento.paciente_nome }
-    });
   };
 
   const pausarAtendimento = () => {
@@ -255,88 +258,117 @@ export default function DentistaDashboard() {
     showToast(`Atendimento finalizado!`, 'success');
   };
 
-  const stats = {
-    totalHoje: agendamentosHoje.length,
-    totalAmanha: agendamentosAmanha.length,
-    totalOntem: agendamentosOntem.length,
-    concluidos: agendamentosConcluidos.length,
-    pausados: atendimentosPausados?.filter(p => p.dentista === user?.nome).length || 0,
-    em_andamento: atendimentoAtivo ? 1 : 0
-  };
-
   const formatarDataLegivel = (dataStr) => {
     const data = new Date(dataStr);
     return data.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' });
   };
 
-  // Componente de card Kanban
+  // Componente KanbanCard com melhorias
   const KanbanCard = ({ agendamento, onClick, onVisualizar, disabled, isVisualizacaoOnly = false }) => {
     const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === agendamento.id);
     const isActive = atendimentoAtivo?.id === agendamento.id;
-    const estaAtrasado = verificarAtraso(agendamento.horario);
+    const prioridade = calcularPrioridade(agendamento.horario);
+    const [showTooltip, setShowTooltip] = useState(false);
     
-    const getStatusIcon = () => {
-      if (isActive) return <Activity size={14} className="text-blue-500 animate-pulse" />;
-      if (estaPausado) return <PauseCircle size={14} className="text-orange-500" />;
-      return <Clock size={14} className="text-gray-400" />;
+    const handleMouseEnter = () => {
+      const pacienteInfo = pacientes.find(p => p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome);
+      setTooltipInfo(pacienteInfo);
+      setShowTooltip(true);
     };
     
-    const getStatusText = () => {
-      if (isActive) return 'Em andamento';
-      if (estaPausado) return 'Pausado';
-      return 'Agendado';
+    const handleMouseLeave = () => {
+      setShowTooltip(false);
+      setTooltipInfo(null);
     };
     
-    const handleClick = () => {
-      if (isVisualizacaoOnly) {
-        onVisualizar?.(agendamento);
-      } else if (!disabled) {
-        onClick?.(agendamento);
-      }
+    const handleHistoricoClick = (e) => {
+      e.stopPropagation();
+      buscarHistoricoRapido(agendamento.paciente_id, agendamento.paciente_nome);
     };
     
     return (
-      <div 
-        onClick={handleClick}
-        className={`bg-white rounded-xl border p-3 mb-2 transition-all hover:shadow-md
-          ${isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''}
-          ${estaPausado ? 'border-orange-300 bg-orange-50' : 'border-gray-100'}
-          ${estaAtrasado && !isActive && !estaPausado ? 'border-red-300 bg-red-50' : ''}
-          ${disabled && !isVisualizacaoOnly ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-[1.01]'}
-        `}
-      >
-        <div className="flex justify-between items-start">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              {getStatusIcon()}
-              <span className="font-semibold text-gray-800">{agendamento.paciente_nome}</span>
-              {estaAtrasado && !isActive && !estaPausado && (
-                <span className="text-red-500 text-[10px] bg-red-100 px-1 rounded">⏰ Atrasado</span>
+      <div className="relative">
+        <div 
+          onClick={() => !disabled && !isVisualizacaoOnly && onClick(agendamento)}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          className={`rounded-xl border p-3 mb-2 transition-all hover:shadow-md
+            ${isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''}
+            ${estaPausado ? 'border-orange-300 bg-orange-50' : ''}
+            ${isVisualizacaoOnly ? 'cursor-pointer' : disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-[1.01]'}
+          `}
+          style={{
+            borderLeft: `4px solid ${prioridade.nivel === 'urgente' ? '#ef4444' : prioridade.nivel === 'alta' ? '#f97316' : prioridade.nivel === 'media' ? '#eab308' : '#3b82f6'}`
+          }}
+        >
+          <div className="flex justify-between items-start">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-lg">{prioridade.icone}</span>
+                <span className="font-semibold text-gray-800">{agendamento.paciente_nome}</span>
+                {prioridade.nivel === 'urgente' && (
+                  <span className="text-red-500 text-[10px] bg-red-100 px-1 rounded animate-pulse">ATRASADO</span>
+                )}
+                {isActive && (
+                  <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <Timer size={10} /> {formatarTempo(tempoAtendimento)}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <Clock size={12} />
+                <span className={prioridade.nivel === 'urgente' ? 'text-red-600 font-medium' : ''}>{agendamento.horario}</span>
+                <span className="text-gray-300">•</span>
+                <span>Sala {agendamento.sala}</span>
+              </div>
+              <p className="text-xs text-gray-600 mt-1">{agendamento.procedimento_nome}</p>
+            </div>
+            <div className="text-right">
+              <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                isActive ? 'bg-blue-100 text-blue-700' :
+                estaPausado ? 'bg-orange-100 text-orange-700' :
+                'bg-gray-100 text-gray-600'
+              }`}>
+                {isActive ? 'Em andamento' : estaPausado ? 'Pausado' : prioridade.texto}
+              </span>
+              {!isVisualizacaoOnly && !isActive && !estaPausado && (
+                <button
+                  onClick={handleHistoricoClick}
+                  className="block mt-1 text-[10px] text-blue-500 hover:text-blue-700 flex items-center justify-end gap-1 w-full"
+                >
+                  <History size={10} /> Histórico
+                </button>
+              )}
+              {isVisualizacaoOnly && (
+                <button
+                  onClick={() => onVisualizar(agendamento)}
+                  className="block mt-1 text-[10px] text-gray-500 hover:text-gray-700 flex items-center justify-end gap-1 w-full"
+                >
+                  <Eye size={10} /> Visualizar
+                </button>
               )}
             </div>
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <Clock size={12} />
-              <span className={estaAtrasado && !isActive ? 'text-red-600 font-medium' : ''}>{agendamento.horario}</span>
-              <span className="text-gray-300">•</span>
-              <span>Sala {agendamento.sala}</span>
-            </div>
-            <p className="text-xs text-gray-600 mt-1">{agendamento.procedimento_nome}</p>
-          </div>
-          <div className="text-right">
-            <span className={`text-[10px] px-2 py-0.5 rounded-full ${
-              isActive ? 'bg-blue-100 text-blue-700' :
-              estaPausado ? 'bg-orange-100 text-orange-700' :
-              'bg-gray-100 text-gray-600'
-            }`}>
-              {getStatusText()}
-            </span>
-            {isVisualizacaoOnly && (
-              <div className="text-[10px] text-gray-400 mt-1 flex items-center justify-end gap-1">
-                <Eye size={10} /> Visualizar
-              </div>
-            )}
           </div>
         </div>
+        
+        {/* Tooltip com informações do paciente */}
+        {showTooltip && tooltipInfo && (
+          <div className="absolute z-50 bottom-full left-0 mb-2 w-64 bg-gray-900 text-white rounded-lg shadow-xl p-3 text-sm animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-2 mb-2">
+              <User size={14} />
+              <span className="font-semibold">{tooltipInfo.nome}</span>
+            </div>
+            {tooltipInfo.telefone && (
+              <div className="text-xs text-gray-300 mb-1">📞 {tooltipInfo.telefone}</div>
+            )}
+            {tooltipInfo.convenio && (
+              <div className="text-xs text-gray-300">🏥 {tooltipInfo.convenio}</div>
+            )}
+            <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
+              Último atendimento: {new Date(agendamento.created_at || Date.now()).toLocaleDateString()}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -352,7 +384,10 @@ export default function DentistaDashboard() {
     );
   }
 
-  const agendamentosHojeFiltrados = filtrarPorBusca(agendamentosHoje);
+  const agendamentosHojeFiltrados = agendamentosHoje.filter(ag => 
+    ag.paciente_nome?.toLowerCase().includes(buscaTermo.toLowerCase()) ||
+    ag.procedimento_nome?.toLowerCase().includes(buscaTermo.toLowerCase())
+  );
 
   return (
     <div className={`min-h-screen ${temaEscuro ? 'bg-gray-900' : 'bg-gray-50'} transition-colors duration-300`}>
@@ -366,11 +401,18 @@ export default function DentistaDashboard() {
               </div>
               <div>
                 <h1 className={`text-xl font-bold ${temaEscuro ? 'text-white' : 'text-gray-800'}`}>Painel do Dentista</h1>
-                <p className={`text-xs ${temaEscuro ? 'text-gray-400' : 'text-gray-500'}`}>{user?.nome} - Gerencie seus atendimentos</p>
+                <p className={`text-xs ${temaEscuro ? 'text-gray-400' : 'text-gray-500'}`}>{user?.nome}</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              {/* Toggle tema escuro */}
+              {/* Timer do atendimento ativo */}
+              {atendimentoAtivo && (
+                <div className="flex items-center gap-2 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
+                  <Timer size={14} className="animate-pulse" />
+                  <span>{formatarTempo(tempoAtendimento)} - {atendimentoAtivo.paciente_nome}</span>
+                </div>
+              )}
+              
               <button 
                 onClick={() => setTemaEscuro(!temaEscuro)}
                 className="p-2 rounded-lg hover:bg-gray-100 transition"
@@ -378,12 +420,6 @@ export default function DentistaDashboard() {
                 {temaEscuro ? <Sun size={18} /> : <Moon size={18} />}
               </button>
               
-              {atendimentoAtivo && (
-                <div className="flex items-center gap-2 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
-                  <Activity size={14} className="animate-pulse" />
-                  <span>Atendendo: {atendimentoAtivo.paciente_nome}</span>
-                </div>
-              )}
               <button onClick={handleLogout} className="flex items-center gap-2 px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg transition text-sm">
                 <LogOut size={16} /> Sair
               </button>
@@ -398,43 +434,13 @@ export default function DentistaDashboard() {
         onRetomar={retomarAtendimento} 
       />
 
-      {/* Resumo do Dia - NOVO */}
-      <div className={`max-w-7xl mx-auto px-4 py-4`}>
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
-            <p className="text-xs text-gray-400">Total Hoje</p>
-            <p className="text-2xl font-bold text-blue-600">{resumoDia.total}</p>
-          </div>
-          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
-            <p className="text-xs text-gray-400">Concluídos</p>
-            <p className="text-2xl font-bold text-green-600">{resumoDia.concluidos}</p>
-          </div>
-          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
-            <p className="text-xs text-gray-400">Em Andamento</p>
-            <p className="text-2xl font-bold text-yellow-600">{resumoDia.em_andamento}</p>
-          </div>
-          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
-            <p className="text-xs text-gray-400">Pausados</p>
-            <p className="text-2xl font-bold text-orange-600">{resumoDia.pausados}</p>
-          </div>
-          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
-            <p className="text-xs text-gray-400">Atrasados</p>
-            <p className="text-2xl font-bold text-red-600">{resumoDia.atrasados}</p>
-          </div>
-          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
-            <p className="text-xs text-gray-400">Taxa de Conclusão</p>
-            <p className="text-2xl font-bold text-purple-600">{resumoDia.taxaConclusao}%</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Barra de Busca - NOVO */}
-      <div className="max-w-7xl mx-auto px-4 pb-4">
+      {/* Barra de Busca e Resumo */}
+      <div className="max-w-7xl mx-auto px-4 py-4">
         <div className="relative">
           <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
           <input
             type="text"
-            placeholder="Buscar paciente por nome, procedimento ou sala..."
+            placeholder="Buscar paciente por nome ou procedimento..."
             value={buscaTermo}
             onChange={(e) => setBuscaTermo(e.target.value)}
             className={`w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${temaEscuro ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-200'}`}
@@ -447,13 +453,12 @@ export default function DentistaDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 min-w-[600px]">
           
           {/* Coluna ONTEM */}
-          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-gray-100'} rounded-xl overflow-hidden flex flex-col h-[calc(100vh-350px)]`}>
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-gray-100'} rounded-xl overflow-hidden flex flex-col h-[calc(100vh-280px)]`}>
             <div className="p-3 bg-gray-200 border-b dark:bg-gray-700">
               <div className="flex items-center gap-2">
                 <ArrowLeft size={16} className="text-gray-500" />
                 <h2 className="font-bold text-gray-700 dark:text-gray-300">📅 Ontem</h2>
                 <span className="text-xs bg-gray-400 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(ontemStr)}</span>
-                <span className="text-[10px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">🔒 Leitura</span>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
@@ -465,7 +470,10 @@ export default function DentistaDashboard() {
                     key={ag.id} 
                     agendamento={ag} 
                     onClick={() => {}} 
-                    onVisualizar={visualizarAgendamento}
+                    onVisualizar={() => {
+                      const pacienteInfo = pacientes.find(p => p.id === ag.paciente_id || p.nome === ag.paciente_nome);
+                      setModalVisualizacao({ ...ag, paciente: pacienteInfo });
+                    }}
                     isVisualizacaoOnly={true}
                     disabled={false}
                   />
@@ -475,13 +483,13 @@ export default function DentistaDashboard() {
           </div>
 
           {/* Coluna HOJE */}
-          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-blue-50'} rounded-xl overflow-hidden flex flex-col h-[calc(100vh-350px)] ring-2 ring-blue-200`}>
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-blue-50'} rounded-xl overflow-hidden flex flex-col h-[calc(100vh-280px)] ring-2 ring-blue-200`}>
             <div className="p-3 bg-blue-100 border-b dark:bg-blue-900">
               <div className="flex items-center gap-2">
                 <CalendarIcon size={16} className="text-blue-600" />
                 <h2 className="font-bold text-blue-800 dark:text-blue-200">📅 Hoje</h2>
                 <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(hoje)}</span>
-                <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✅ Disponível</span>
+                <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✅ {agendamentosHoje.length} atendimentos</span>
               </div>
               {buscaTermo && agendamentosHojeFiltrados.length !== agendamentosHoje.length && (
                 <p className="text-xs text-blue-600 mt-1">Encontrados {agendamentosHojeFiltrados.length} de {agendamentosHoje.length}</p>
@@ -507,13 +515,12 @@ export default function DentistaDashboard() {
           </div>
 
           {/* Coluna AMANHÃ */}
-          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-purple-50'} rounded-xl overflow-hidden flex flex-col h-[calc(100vh-350px)]`}>
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-purple-50'} rounded-xl overflow-hidden flex flex-col h-[calc(100vh-280px)]`}>
             <div className="p-3 bg-purple-100 border-b dark:bg-purple-900">
               <div className="flex items-center gap-2">
                 <ArrowRight size={16} className="text-purple-500" />
                 <h2 className="font-bold text-purple-800 dark:text-purple-200">📅 Amanhã</h2>
                 <span className="text-xs bg-purple-500 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(amanhaStr)}</span>
-                <span className="text-[10px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">🔒 Leitura</span>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
@@ -525,7 +532,10 @@ export default function DentistaDashboard() {
                     key={ag.id} 
                     agendamento={ag} 
                     onClick={() => {}} 
-                    onVisualizar={visualizarAgendamento}
+                    onVisualizar={() => {
+                      const pacienteInfo = pacientes.find(p => p.id === ag.paciente_id || p.nome === ag.paciente_nome);
+                      setModalVisualizacao({ ...ag, paciente: pacienteInfo });
+                    }}
                     isVisualizacaoOnly={true}
                   />
                 ))
@@ -535,16 +545,56 @@ export default function DentistaDashboard() {
         </div>
       </div>
 
-      {/* Modais existentes... */}
+      {/* Modal Histórico Rápido */}
+      {historicoRapido && (
+        <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-blue-50 to-white">
+              <div className="flex items-center gap-2">
+                <History size={20} className="text-blue-600" />
+                <h2 className="font-bold">Histórico Rápido</h2>
+              </div>
+              <button onClick={() => setHistoricoRapido(null)} className="text-gray-400 hover:text-gray-600">
+                <XCircle size={24} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {historicoRapido.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">Nenhum histórico encontrado</div>
+              ) : (
+                historicoRapido.map((reg, idx) => (
+                  <div key={idx} className="border-l-4 border-blue-500 pl-3 py-2 mb-3 bg-gray-50 rounded-r-lg">
+                    <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
+                      <ClockIcon size={10} />
+                      <span>{reg.data}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-xs ${reg.tipo === 'sistema' ? 'bg-blue-100' : 'bg-gray-200'}`}>
+                        {reg.tipo === 'sistema' ? 'Sistema' : 'Manual'}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-700">{reg.descricao.substring(0, 100)}...</p>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="p-4 border-t bg-gray-50">
+              <button onClick={() => setHistoricoRapido(null)} className="w-full bg-gray-600 text-white py-2 rounded-lg">Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Atendimento Ativo */}
       {atendimentoAtivo && (
         <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className={`bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col ${temaEscuro ? 'dark' : ''}`}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-blue-50 to-white">
               <div className="flex items-center gap-2">
                 <Activity size={20} className="text-blue-600" />
                 <h2 className="font-bold">Atendimento em andamento</h2>
                 <span className="text-sm text-gray-500">| {atendimentoAtivo.paciente_nome}</span>
+                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Timer size={12} /> {formatarTempo(tempoAtendimento)}
+                </span>
               </div>
               <button 
                 onClick={() => {
@@ -574,7 +624,7 @@ export default function DentistaDashboard() {
       {/* Modal de Visualização */}
       {modalVisualizacao && (
         <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className={`bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col ${temaEscuro ? 'dark' : ''}`}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
             <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-gray-50 to-white">
               <div className="flex items-center gap-2">
                 <Eye size={20} className="text-gray-500" />
