@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, ChevronRight, LogOut, Activity, Users, ClipboardList, Play, PauseCircle } from 'lucide-react';
+import { Calendar, Clock, ChevronRight, LogOut, Activity, Users, ClipboardList, Play, PauseCircle, CheckCircle, XCircle, AlertCircle, Calendar as CalendarIcon, ArrowRight, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useMaterial } from '../../contexts/MaterialContext';
@@ -28,35 +28,49 @@ export default function DentistaDashboard() {
   } = useMaterial();
   
   const [atendimentoAtivo, setAtendimentoAtivo] = useState(null);
-  const [meusAgendamentos, setMeusAgendamentos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filtroData, setFiltroData] = useState('hoje');
+  
+  // Obter datas
+  const hoje = new Date().toISOString().split('T')[0];
+  const amanha = new Date();
+  amanha.setDate(amanha.getDate() + 1);
+  const amanhaStr = amanha.toISOString().split('T')[0];
+  const ontem = new Date();
+  ontem.setDate(ontem.getDate() - 1);
+  const ontemStr = ontem.toISOString().split('T')[0];
+  
+  // Separar agendamentos por data
+  const [agendamentosHoje, setAgendamentosHoje] = useState([]);
+  const [agendamentosAmanha, setAgendamentosAmanha] = useState([]);
+  const [agendamentosOntem, setAgendamentosOntem] = useState([]);
+  const [agendamentosConcluidos, setAgendamentosConcluidos] = useState([]);
 
-  // Filtrar agendamentos do dentista logado
+  // Carregar e separar agendamentos
   useEffect(() => {
     if (!agendamentos) return;
     
     const dentistaNome = user?.nome || 'Dra. Ana Silva';
-    const hoje = new Date().toISOString().split('T')[0];
     
-    let filtrados = agendamentos.filter(ag => {
+    const filtrados = agendamentos.filter(ag => {
       const isDentista = ag.dentista_nome === dentistaNome;
-      const naoConcluido = ag.status !== 'concluido' && ag.status !== 'cancelado';
-      return isDentista && naoConcluido;
+      return isDentista;
     });
     
-    if (filtroData === 'hoje') {
-      filtrados = filtrados.filter(ag => ag.data === hoje);
-    }
+    // Separar por status e data
+    const hojeList = filtrados.filter(ag => ag.data === hoje && ag.status !== 'concluido' && ag.status !== 'cancelado');
+    const amanhaList = filtrados.filter(ag => ag.data === amanhaStr && ag.status !== 'concluido' && ag.status !== 'cancelado');
+    const ontemList = filtrados.filter(ag => ag.data === ontemStr && ag.status !== 'concluido' && ag.status !== 'cancelado');
+    const concluidosList = filtrados.filter(ag => ag.status === 'concluido');
     
-    filtrados.sort((a, b) => {
-      if (a.data !== b.data) return a.data.localeCompare(b.data);
-      return (a.horario || '00:00').localeCompare(b.horario || '00:00');
-    });
+    // Ordenar por horário
+    const ordenar = (a, b) => (a.horario || '00:00').localeCompare(b.horario || '00:00');
     
-    setMeusAgendamentos(filtrados);
+    setAgendamentosHoje(hojeList.sort(ordenar));
+    setAgendamentosAmanha(amanhaList.sort(ordenar));
+    setAgendamentosOntem(ontemList.sort(ordenar));
+    setAgendamentosConcluidos(concluidosList.sort(ordenar));
     setLoading(false);
-  }, [agendamentos, user, filtroData]);
+  }, [agendamentos, user]);
 
   const handleLogout = () => {
     logout();
@@ -65,13 +79,11 @@ export default function DentistaDashboard() {
   };
 
   const selecionarAtendimento = (agendamento) => {
-    // IMPEDIR: Se já existe um atendimento ativo, não permite iniciar outro
     if (atendimentoAtivo) {
       showToast(`Você já está atendendo ${atendimentoAtivo.paciente_nome}. Finalize ou pause antes de iniciar outro.`, 'error');
       return;
     }
     
-    // Verificar se o atendimento está pausado
     const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === agendamento.id);
     if (estaPausado) {
       showToast('Este atendimento está pausado. Retome-o pelo card amarelo.', 'info');
@@ -80,11 +92,6 @@ export default function DentistaDashboard() {
     
     if (agendamento.status === 'concluido') {
       showToast('Este atendimento já foi concluído!', 'info');
-      return;
-    }
-    
-    if (agendamento.status === 'pausado') {
-      showToast('Este atendimento está pausado. Retome pelo card amarelo.', 'info');
       return;
     }
     
@@ -105,9 +112,6 @@ export default function DentistaDashboard() {
   };
 
   const pausarAtendimento = () => {
-    console.log('🔴 PAUSAR ATENDIMENTO CHAMADO');
-    console.log('Atendimento ativo:', atendimentoAtivo);
-    
     if (!atendimentoAtivo) {
       showToast('Nenhum atendimento ativo para pausar', 'error');
       return;
@@ -125,35 +129,19 @@ export default function DentistaDashboard() {
       dentista: user?.nome
     };
     
-    console.log('Novo pausado:', novoPausado);
-    
-    // Salvar no contexto global
     pausarAtendimentoGlobal(novoPausado);
-    
-    // Atualizar status do agendamento
-    atualizarAgendamento({ 
-      ...atendimentoAtivo, 
-      status: 'pausado' 
-    });
-    
-    // Limpar atendimento ativo
+    atualizarAgendamento({ ...atendimentoAtivo, status: 'pausado' });
     setAtendimentoAtivo(null);
-    
     showToast(`Atendimento de ${novoPausado.paciente} pausado! Clique no card amarelo para retomar.`, 'info');
   };
 
   const retomarAtendimento = (pausado) => {
-    console.log('🟢 RETOMAR ATENDIMENTO CHAMADO');
-    console.log('Pausado:', pausado);
-    
-    // IMPEDIR: Se já existe um atendimento ativo, não permite retomar outro
     if (atendimentoAtivo) {
       showToast(`Finalize ou pause ${atendimentoAtivo.paciente_nome} antes de retomar outro atendimento.`, 'error');
       return;
     }
     
-    const agendamento = meusAgendamentos.find(ag => ag.id === pausado.atendimento_id) || 
-                        agendamentos.find(ag => ag.id === pausado.atendimento_id);
+    const agendamento = [...agendamentosHoje, ...agendamentosAmanha, ...agendamentosOntem].find(ag => ag.id === pausado.atendimento_id);
     
     if (agendamento) {
       const pacienteCompleto = pacientes.find(p => p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome);
@@ -165,7 +153,6 @@ export default function DentistaDashboard() {
       atualizarAgendamento({ ...agendamento, status: 'em_andamento' });
     }
     
-    // Remover dos pausados
     retomarAtendimentoGlobal(pausado.id);
     showToast(`Atendimento de ${pausado.paciente} retomado!`, 'success');
   };
@@ -224,17 +211,80 @@ export default function DentistaDashboard() {
     showToast(`Atendimento finalizado! Materiais: R$ ${resultado.consumo?.reduce((s, i) => s + i.custo, 0).toFixed(2) || '0,00'}`, 'success');
   };
 
-  const formatarData = (data) => {
-    if (!data) return 'Data não definida';
-    const [ano, mes, dia] = data.split('-');
-    return `${dia}/${mes}/${ano}`;
+  const stats = {
+    totalHoje: agendamentosHoje.length,
+    totalAmanha: agendamentosAmanha.length,
+    totalOntem: agendamentosOntem.length,
+    concluidos: agendamentosConcluidos.length,
+    pausados: atendimentosPausados?.filter(p => p.dentista === user?.nome).length || 0,
+    em_andamento: atendimentoAtivo ? 1 : 0
   };
 
-  const stats = {
-    total: meusAgendamentos.length,
-    em_andamento: atendimentoAtivo ? 1 : 0,
-    pausados: atendimentosPausados?.filter(p => p.dentista === user?.nome).length || 0,
-    concluidos: agendamentos?.filter(ag => ag.dentista_nome === user?.nome && ag.status === 'concluido').length || 0
+  const formatarDataLegivel = (dataStr) => {
+    const data = new Date(dataStr);
+    return data.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' });
+  };
+
+  // Componente de card Kanban
+  const KanbanCard = ({ agendamento, onClick, disabled }) => {
+    const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === agendamento.id);
+    const isActive = atendimentoAtivo?.id === agendamento.id;
+    
+    const getStatusIcon = () => {
+      if (isActive) return <Activity size={14} className="text-blue-500 animate-pulse" />;
+      if (estaPausado) return <PauseCircle size={14} className="text-orange-500" />;
+      if (agendamento.status === 'concluido') return <CheckCircle size={14} className="text-green-500" />;
+      return <Clock size={14} className="text-gray-400" />;
+    };
+    
+    const getStatusText = () => {
+      if (isActive) return 'Em andamento';
+      if (estaPausado) return 'Pausado';
+      if (agendamento.status === 'concluido') return 'Concluído';
+      return 'Agendado';
+    };
+    
+    return (
+      <div 
+        onClick={() => !disabled && onClick(agendamento)} 
+        className={`bg-white rounded-xl border p-3 mb-2 transition-all hover:shadow-md
+          ${isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''}
+          ${estaPausado ? 'border-orange-300 bg-orange-50' : 'border-gray-100'}
+          ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-[1.01]'}
+        `}
+      >
+        <div className="flex justify-between items-start">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              {getStatusIcon()}
+              <span className="font-semibold text-gray-800">{agendamento.paciente_nome}</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <Clock size={12} />
+              <span>{agendamento.horario}</span>
+              <span className="text-gray-300">•</span>
+              <span>Sala {agendamento.sala}</span>
+            </div>
+            <p className="text-xs text-gray-600 mt-1">{agendamento.procedimento_nome}</p>
+          </div>
+          <div className="text-right">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+              isActive ? 'bg-blue-100 text-blue-700' :
+              estaPausado ? 'bg-orange-100 text-orange-700' :
+              agendamento.status === 'concluido' ? 'bg-green-100 text-green-700' :
+              'bg-gray-100 text-gray-600'
+            }`}>
+              {getStatusText()}
+            </span>
+          </div>
+        </div>
+        {disabled && (
+          <div className="text-[10px] text-gray-400 mt-2 flex items-center gap-1">
+            <AlertCircle size={10} /> Aguardando finalizar {atendimentoAtivo?.paciente_nome}
+          </div>
+        )}
+      </div>
+    );
   };
 
   if (loading) {
@@ -251,36 +301,27 @@ export default function DentistaDashboard() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
-      <div className="bg-white shadow-sm border-b sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+      <div className="bg-white shadow-sm border-b sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
               <div className="bg-blue-100 p-2 rounded-lg">
                 <Activity className="text-blue-600" size={24} />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gray-800">Painel do Dentista</h1>
-                <p className="text-sm text-gray-500">{user?.nome} - Gerencie seus atendimentos</p>
+                <h1 className="text-xl font-bold text-gray-800">Painel do Dentista</h1>
+                <p className="text-xs text-gray-500">{user?.nome} - Gerencie seus atendimentos</p>
               </div>
             </div>
-            <div className="flex items-center gap-4">
-              {/* Indicador de atendimento ativo */}
+            <div className="flex items-center gap-3">
               {atendimentoAtivo && (
                 <div className="flex items-center gap-2 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
                   <Activity size={14} className="animate-pulse" />
                   <span>Atendendo: {atendimentoAtivo.paciente_nome}</span>
                 </div>
               )}
-              <select
-                value={filtroData}
-                onChange={(e) => setFiltroData(e.target.value)}
-                className="px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="hoje">📅 Hoje</option>
-                <option value="todos">📋 Todos os agendamentos</option>
-              </select>
-              <button onClick={handleLogout} className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition">
-                <LogOut size={18} /> Sair
+              <button onClick={handleLogout} className="flex items-center gap-2 px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg transition text-sm">
+                <LogOut size={16} /> Sair
               </button>
             </div>
           </div>
@@ -294,120 +335,155 @@ export default function DentistaDashboard() {
       />
 
       {/* Stats Cards */}
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-gray-500 text-sm">{filtroData === 'hoje' ? 'Pendentes Hoje' : 'Total Pendentes'}</p><p className="text-2xl font-bold">{stats.total}</p></div>
-              <Calendar className="text-blue-500" size={32} />
+      <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl p-3 text-white">
+            <p className="text-xs opacity-90">Hoje</p>
+            <p className="text-2xl font-bold">{stats.totalHoje}</p>
+          </div>
+          <div className="bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl p-3 text-white">
+            <p className="text-xs opacity-90">Amanhã</p>
+            <p className="text-2xl font-bold">{stats.totalAmanha}</p>
+          </div>
+          <div className="bg-gradient-to-r from-gray-500 to-gray-600 rounded-xl p-3 text-white">
+            <p className="text-xs opacity-90">Ontem</p>
+            <p className="text-2xl font-bold">{stats.totalOntem}</p>
+          </div>
+          <div className="bg-gradient-to-r from-green-500 to-green-600 rounded-xl p-3 text-white">
+            <p className="text-xs opacity-90">Concluídos</p>
+            <p className="text-2xl font-bold">{stats.concluidos}</p>
+          </div>
+          <div className="bg-gradient-to-r from-yellow-500 to-yellow-600 rounded-xl p-3 text-white">
+            <p className="text-xs opacity-90">Pausados</p>
+            <p className="text-2xl font-bold">{stats.pausados}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Kanban Board */}
+      <div className="flex-1 overflow-x-auto max-w-7xl mx-auto px-4 pb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 min-w-[600px]">
+          
+          {/* Coluna ONTEM */}
+          <div className="bg-gray-100 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-250px)]">
+            <div className="p-3 bg-gray-200 border-b">
+              <div className="flex items-center gap-2">
+                <ArrowLeft size={16} className="text-gray-500" />
+                <h2 className="font-bold text-gray-700">📅 Ontem</h2>
+                <span className="text-xs bg-gray-400 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(ontemStr)}</span>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {agendamentosOntem.length === 0 ? (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  <CalendarIcon size={32} className="mx-auto mb-2 opacity-50" />
+                  Nenhum atendimento
+                </div>
+              ) : (
+                agendamentosOntem.map(ag => (
+                  <KanbanCard 
+                    key={ag.id} 
+                    agendamento={ag} 
+                    onClick={selecionarAtendimento}
+                    disabled={!!atendimentoAtivo && atendimentoAtivo.id !== ag.id}
+                  />
+                ))
+              )}
             </div>
           </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-gray-500 text-sm">Em Andamento</p><p className="text-2xl font-bold">{stats.em_andamento}</p></div>
-              <Activity className="text-green-500" size={32} />
+
+          {/* Coluna HOJE */}
+          <div className="bg-blue-50 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-250px)] ring-2 ring-blue-200">
+            <div className="p-3 bg-blue-100 border-b">
+              <div className="flex items-center gap-2">
+                <CalendarIcon size={16} className="text-blue-600" />
+                <h2 className="font-bold text-blue-800">📅 Hoje</h2>
+                <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(hoje)}</span>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {agendamentosHoje.length === 0 ? (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  <CalendarIcon size={32} className="mx-auto mb-2 opacity-50" />
+                  Nenhum atendimento hoje
+                </div>
+              ) : (
+                agendamentosHoje.map(ag => (
+                  <KanbanCard 
+                    key={ag.id} 
+                    agendamento={ag} 
+                    onClick={selecionarAtendimento}
+                    disabled={!!atendimentoAtivo && atendimentoAtivo.id !== ag.id}
+                  />
+                ))
+              )}
             </div>
           </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-gray-500 text-sm">Pausados</p><p className="text-2xl font-bold text-yellow-600">{stats.pausados}</p></div>
-              <PauseCircle className="text-yellow-500" size={32} />
+
+          {/* Coluna AMANHÃ */}
+          <div className="bg-purple-50 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-250px)]">
+            <div className="p-3 bg-purple-100 border-b">
+              <div className="flex items-center gap-2">
+                <ArrowRight size={16} className="text-purple-500" />
+                <h2 className="font-bold text-purple-800">📅 Amanhã</h2>
+                <span className="text-xs bg-purple-500 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(amanhaStr)}</span>
+              </div>
             </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-gray-500 text-sm">Concluídos</p><p className="text-2xl font-bold text-green-600">{stats.concluidos}</p></div>
-              <ClipboardList className="text-purple-500" size={32} />
+            <div className="flex-1 overflow-y-auto p-2">
+              {agendamentosAmanha.length === 0 ? (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  <CalendarIcon size={32} className="mx-auto mb-2 opacity-50" />
+                  Nenhum atendimento amanhã
+                </div>
+              ) : (
+                agendamentosAmanha.map(ag => (
+                  <KanbanCard 
+                    key={ag.id} 
+                    agendamento={ag} 
+                    onClick={selecionarAtendimento}
+                    disabled={!!atendimentoAtivo && atendimentoAtivo.id !== ag.id}
+                  />
+                ))
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Conteúdo Principal */}
-      <div className="flex-1 flex overflow-hidden max-w-7xl mx-auto px-4 pb-6">
-        {/* Agenda */}
-        <div className="w-96 bg-white rounded-lg shadow mr-6 overflow-hidden flex flex-col">
-          <div className="p-4 border-b bg-gray-50">
-            <h2 className="text-xl font-bold flex items-center gap-2"><Calendar size={20} /> {filtroData === 'hoje' ? 'Agenda de Hoje' : 'Todos os Agendamentos'}</h2>
-            <p className="text-sm text-gray-500 mt-1">{filtroData === 'hoje' ? new Date().toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'Lista completa'}</p>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4">
-            {meusAgendamentos.length === 0 ? (
-              <div className="text-center py-12 text-gray-400">
-                <Calendar size={48} className="mx-auto mb-3" />
-                <p>Nenhum agendamento encontrado</p>
-                <p className="text-sm mt-2">Aguardando agendamentos da secretaria</p>
+      {/* Prontuário (Modal/Drawer quando atendimento ativo) */}
+      {atendimentoAtivo && (
+        <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-blue-50 to-white">
+              <div className="flex items-center gap-2">
+                <Activity size={20} className="text-blue-600" />
+                <h2 className="font-bold">Atendimento em andamento</h2>
+                <span className="text-sm text-gray-500">| {atendimentoAtivo.paciente_nome}</span>
               </div>
-            ) : (
-              meusAgendamentos.map(ag => {
-                const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === ag.id);
-                const isActive = atendimentoAtivo?.id === ag.id;
-                const isDisabled = atendimentoAtivo && !isActive && !estaPausado;
-                
-                return (
-                  <div 
-                    key={ag.id} 
-                    onClick={() => !isDisabled && selecionarAtendimento(ag)} 
-                    className={`bg-white rounded-lg shadow border p-4 mb-3 transition hover:shadow-md 
-                      ${isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''} 
-                      ${estaPausado ? 'border-yellow-400 bg-yellow-50' : ''}
-                      ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:shadow-md'}
-                    `}
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Clock size={14} className="text-gray-400" />
-                          <span className="font-semibold text-lg">{ag.horario}</span>
-                          {filtroData !== 'hoje' && (
-                            <span className="text-xs text-gray-400 ml-2">{formatarData(ag.data)}</span>
-                          )}
-                        </div>
-                        <p className="font-medium text-gray-800">{ag.paciente_nome}</p>
-                        <p className="text-sm text-gray-600">{ag.procedimento_nome}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm text-gray-500">Sala {ag.sala}</p>
-                        <span className={`text-xs px-2 py-1 rounded mt-1 inline-block ${isActive ? 'bg-blue-100 text-blue-700' : estaPausado ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
-                          {isActive ? 'Em andamento' : estaPausado ? 'Pausado' : 'Agendado'}
-                        </span>
-                      </div>
-                    </div>
-                    {isDisabled && (
-                      <div className="text-xs text-gray-400 mt-1 flex items-center gap-1">
-                        <Activity size={10} /> Aguardando finalizar {atendimentoAtivo?.paciente_nome}
-                      </div>
-                    )}
-                    <div className="flex justify-end mt-2"><ChevronRight size={16} className="text-gray-400" /></div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-        
-        {/* Prontuário */}
-        <div className="flex-1">
-          {atendimentoAtivo ? (
-            <ProntuarioView
-              paciente={atendimentoAtivo.paciente}
-              atendimento={atendimentoAtivo}
-              onPausar={pausarAtendimento}
-              onRetomar={() => {}}
-              onPedirRetorno={pedirRetorno}
-              onFinalizar={finalizarAtendimento}
-            />
-          ) : (
-            <div className="bg-white rounded-lg shadow h-full flex items-center justify-center">
-              <div className="text-center text-gray-400">
-                <Calendar size={64} className="mx-auto mb-4 text-gray-300" />
-                <p className="text-lg font-medium">Nenhum atendimento selecionado</p>
-                <p className="text-sm mt-2">Clique em um paciente na agenda para iniciar o atendimento</p>
-              </div>
+              <button 
+                onClick={() => {
+                  if (confirm('Tem certeza que deseja fechar? O atendimento continuará em andamento.')) {
+                    setAtendimentoAtivo(null);
+                  }
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XCircle size={24} />
+              </button>
             </div>
-          )}
+            <div className="flex-1 overflow-y-auto">
+              <ProntuarioView
+                paciente={atendimentoAtivo.paciente}
+                atendimento={atendimentoAtivo}
+                onPausar={pausarAtendimento}
+                onRetomar={() => {}}
+                onPedirRetorno={pedirRetorno}
+                onFinalizar={finalizarAtendimento}
+              />
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
