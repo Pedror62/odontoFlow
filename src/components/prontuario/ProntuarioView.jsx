@@ -17,15 +17,19 @@ const TEMPLATES = [
   { id: 3, titulo: '🦷 Extração', texto: 'Exodontia realizada sob anestesia local. Paciente orientado sobre cuidados pós-operatórios. Gelo local nas primeiras 24h.' },
   { id: 4, titulo: '🦷 Restauração', texto: 'Restauração em resina composta realizada. Ajuste oclusal e acabamento realizados. Paciente satisfeito.' },
   { id: 5, titulo: '💊 Prescrição', texto: 'Prescrito medicação conforme necessidade. Orientações sobre posologia e possíveis efeitos colaterais.' },
+  { id: 6, titulo: '📝 Exame', texto: 'Solicitado exame de Raio-X panorâmico. Paciente encaminhado para realização do exame.' },
+  { id: 7, titulo: '🦷 Endodontia', texto: 'Tratamento endodôntico iniciado. Canal preparado com limas manuais e rotatórias. Curativo de demora.' },
 ];
 
 // Medicamentos pré-cadastrados
 const MEDICAMENTOS = [
-  { id: 1, nome: 'Amoxicilina', dosagem: '500mg', intervalo: '8/8h', duracao: '7 dias' },
-  { id: 2, nome: 'Dipirona', dosagem: '500mg', intervalo: '6/6h', duracao: '3 dias' },
-  { id: 3, nome: 'Ibuprofeno', dosagem: '400mg', intervalo: '8/8h', duracao: '5 dias' },
-  { id: 4, nome: 'Nimesulida', dosagem: '100mg', intervalo: '12/12h', duracao: '3 dias' },
-  { id: 5, nome: 'Paracetamol', dosagem: '750mg', intervalo: '6/6h', duracao: '3 dias' },
+  { id: 1, nome: 'Amoxicilina', dosagem: '500mg', intervalo: '8/8h', duracao: '7 dias', indicacao: 'Infecções bacterianas' },
+  { id: 2, nome: 'Dipirona', dosagem: '500mg', intervalo: '6/6h', duracao: '3 dias', indicacao: 'Dor e febre' },
+  { id: 3, nome: 'Ibuprofeno', dosagem: '400mg', intervalo: '8/8h', duracao: '5 dias', indicacao: 'Anti-inflamatório' },
+  { id: 4, nome: 'Nimesulida', dosagem: '100mg', intervalo: '12/12h', duracao: '3 dias', indicacao: 'Anti-inflamatório' },
+  { id: 5, nome: 'Paracetamol', dosagem: '750mg', intervalo: '6/6h', duracao: '3 dias', indicacao: 'Dor' },
+  { id: 6, nome: 'Cloridrato de Lidocaína', dosagem: '2%', intervalo: 'Uso tópico', duracao: '', indicacao: 'Anestesia local' },
+  { id: 7, nome: 'Dexametasona', dosagem: '4mg', intervalo: '12/12h', duracao: '2 dias', indicacao: 'Anti-inflamatório' },
 ];
 
 export default function ProntuarioView({ 
@@ -51,7 +55,7 @@ export default function ProntuarioView({
   const [imagemSelecionada, setImagemSelecionada] = useState(null);
   const [uploadPreview, setUploadPreview] = useState(null);
   const [uploading, setUploading] = useState(false);
-  const [prescricao, setPrescricaoForm] = useState({ medicamento: '', posologia: '', observacoes: '' });
+  const [prescricao, setPrescricaoForm] = useState({ medicamento: '', posologia: '', observacoes: '', indicacao: '' });
   const [retornoData, setRetornoData] = useState({ data: '', horario: '', sala: '', observacoes: '' });
   const [tempoAtendimento, setTempoAtendimento] = useState(0);
   const [tempoEstimado, setTempoEstimado] = useState(30);
@@ -96,12 +100,18 @@ export default function ProntuarioView({
     img.paciente_id === paciente?.id || img.paciente_nome === paciente?.nome
   );
 
-  // Carregar histórico
+  // Carregar histórico - CORRIGIDO
   useEffect(() => {
     if (paciente) {
-      const saved = localStorage.getItem(`prontuario_${paciente.id || paciente.nome}`);
+      const storageKey = `prontuario_${paciente.id || paciente.nome}`;
+      const saved = localStorage.getItem(storageKey);
       if (saved) {
-        setHistorico(JSON.parse(saved));
+        try {
+          setHistorico(JSON.parse(saved));
+        } catch(e) {
+          console.error('Erro ao carregar histórico:', e);
+          setHistorico([]);
+        }
       } else {
         const inicial = [{
           id: Date.now(),
@@ -110,7 +120,7 @@ export default function ProntuarioView({
           descricao: `Atendimento iniciado - ${atendimento?.procedimento_nome || 'Consulta'}`,
         }];
         setHistorico(inicial);
-        localStorage.setItem(`prontuario_${paciente.id || paciente.nome}`, JSON.stringify(inicial));
+        localStorage.setItem(storageKey, JSON.stringify(inicial));
       }
     }
   }, [paciente, atendimento?.procedimento_nome]);
@@ -118,56 +128,100 @@ export default function ProntuarioView({
   const salvarHistorico = (novoHistorico) => {
     setHistorico(novoHistorico);
     if (paciente) {
-      localStorage.setItem(`prontuario_${paciente.id || paciente.nome}`, JSON.stringify(novoHistorico));
+      const storageKey = `prontuario_${paciente.id || paciente.nome}`;
+      localStorage.setItem(storageKey, JSON.stringify(novoHistorico));
     }
   };
 
   const adicionarHistorico = (texto, tipo = 'manual') => {
-    if (!texto.trim()) return;
+    if (!texto.trim()) {
+      showToast('Digite um texto para adicionar', 'error');
+      return;
+    }
+    
     const novo = { 
       id: Date.now(), 
       data: new Date().toLocaleString(), 
       tipo, 
       descricao: texto 
     };
-    salvarHistorico([novo, ...historico]);
+    const novoHistorico = [novo, ...historico];
+    salvarHistorico(novoHistorico);
     setNovaAnotacao('');
-    showToast('Anotação adicionada!', 'success');
+    showToast('Anotação adicionada ao prontuário!', 'success');
   };
 
+  // FUNÇÃO CORRIGIDA - Templates
   const aplicarTemplate = (template) => {
+    console.log('📝 Aplicando template:', template.titulo);
     adicionarHistorico(template.texto, 'manual');
     setShowTemplates(false);
   };
 
+  // FUNÇÃO CORRIGIDA - Prescrição
   const adicionarPrescricao = () => {
     if (!prescricao.medicamento) {
       showToast('Selecione um medicamento', 'error');
       return;
     }
-    const text = `💊 Prescrição: ${prescricao.medicamento}\nPosologia: ${prescricao.posologia}\nObs: ${prescricao.observacoes}`;
+    
+    const dataAtual = new Date().toLocaleDateString('pt-BR');
+    const dentistaNome = atendimento?.dentista_nome || 'Dr(a).';
+    
+    const text = `💊 PRESCRIÇÃO MÉDICA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Paciente: ${paciente?.nome}
+Data: ${dataAtual}
+Medicamento: ${prescricao.medicamento}
+${prescricao.posologia ? `Posologia: ${prescricao.posologia}` : ''}
+${prescricao.indicacao ? `Indicação: ${prescricao.indicacao}` : ''}
+${prescricao.observacoes ? `Observações: ${prescricao.observacoes}` : ''}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Assinatura: ${dentistaNome}
+CRM/ CRO: _____________`;
+    
     adicionarHistorico(text, 'manual');
     setShowPrescricao(false);
-    setPrescricaoForm({ medicamento: '', posologia: '', observacoes: '' });
+    setPrescricaoForm({ medicamento: '', posologia: '', observacoes: '', indicacao: '' });
   };
 
+  // FUNÇÃO CORRIGIDA - Retorno
   const solicitarRetorno = () => {
     if (!retornoData.data || !retornoData.horario) {
-      showToast('Preencha data e horário', 'error');
+      showToast('Preencha data e horário do retorno', 'error');
       return;
     }
-    const text = `📅 Retorno agendado para ${retornoData.data} às ${retornoData.horario} - Sala ${retornoData.sala}\nObs: ${retornoData.observacoes}`;
+    
+    const dataFormatada = new Date(retornoData.data).toLocaleDateString('pt-BR');
+    const text = `📅 RETORNO AGENDADO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Paciente: ${paciente?.nome}
+Data do Retorno: ${dataFormatada}
+Horário: ${retornoData.horario}
+Sala: ${retornoData.sala || 'A definir'}
+${retornoData.observacoes ? `Observações: ${retornoData.observacoes}` : ''}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Motivo: ${atendimento?.procedimento_nome || 'Avaliação'}`;
+    
     adicionarHistorico(text, 'sistema');
-    onPedirRetorno?.({ 
-      paciente, 
-      procedimento: atendimento?.procedimento_nome, 
-      ...retornoData 
-    });
+    
+    // Chamar função do dentista dashboard
+    if (onPedirRetorno) {
+      onPedirRetorno({ 
+        paciente: paciente, 
+        procedimento: atendimento?.procedimento_nome, 
+        data: retornoData.data, 
+        horario: retornoData.horario, 
+        sala: retornoData.sala, 
+        observacoes: retornoData.observacoes 
+      });
+    }
+    
     setShowRetornoForm(false);
     setRetornoData({ data: '', horario: '', sala: '', observacoes: '' });
-    showToast('Retorno agendado!', 'success');
   };
 
+  // FUNÇÃO CORRIGIDA - Finalizar com materiais
   const finalizarComMateriais = async () => {
     if (!atendimento) {
       showToast('Nenhum atendimento ativo', 'error');
@@ -206,7 +260,7 @@ export default function ProntuarioView({
     
     const materiaisText = result.consumo.map(m => `${m.materialNome}: ${m.quantidade} un`).join(', ');
     const custoTotal = result.consumo.reduce((s, i) => s + i.custo, 0).toFixed(2);
-    adicionarHistorico(`✅ Atendimento finalizado.\nMateriais: ${materiaisText}\nCusto: R$ ${custoTotal}`, 'sistema');
+    adicionarHistorico(`✅ ATENDIMENTO FINALIZADO\nMateriais utilizados: ${materiaisText}\nCusto total de materiais: R$ ${custoTotal}`, 'sistema');
     showToast(`Atendimento finalizado! Custo materiais: R$ ${custoTotal}`, 'success');
     
     setTimeout(() => {
@@ -228,7 +282,7 @@ export default function ProntuarioView({
         data: new Date().toISOString() 
       };
       adicionarImagem(novaImagem);
-      adicionarHistorico(`📸 Exame/Imagem adicionado ao prontuário`, 'sistema');
+      adicionarHistorico(`📸 EXAME ADICIONADO - ${new Date().toLocaleDateString()}\nImagem anexada ao prontuário do paciente.`, 'sistema');
       setUploading(false);
       setShowUploadModal(false);
       setUploadPreview(null);
@@ -262,18 +316,7 @@ export default function ProntuarioView({
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <button 
-              onClick={() => {
-                console.log('🔴 Botão PAUSAR clicado no ProntuarioView');
-                if (onPausar) {
-                  onPausar();
-                } else {
-                  console.log('⚠️ onPausar não está definido!');
-                  showToast('Erro: função pausar não disponível', 'error');
-                }
-              }} 
-              className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-sm flex items-center gap-1 hover:bg-yellow-600 transition"
-            >
+            <button onClick={onPausar} className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-sm flex items-center gap-1 hover:bg-yellow-600 transition">
               <Pause size={14} /> Pausar
             </button>
             <button onClick={() => setShowTemplates(true)} className="px-3 py-1.5 bg-gray-500 text-white rounded-lg text-sm flex items-center gap-1 hover:bg-gray-600 transition">
@@ -342,52 +385,42 @@ export default function ProntuarioView({
               </button>
             </div>
             <div className="space-y-3">
-              {historico.map(reg => (
-                <div key={reg.id} className="border-l-4 border-blue-500 pl-3 py-2 bg-white rounded-r-lg">
-                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-1 flex-wrap">
-                    <Clock size={10} />
-                    <span>{reg.data}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-xs ${reg.tipo === 'sistema' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                      {reg.tipo === 'sistema' ? '🤖 Sistema' : '📝 Manual'}
-                    </span>
+              {historico.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">Nenhum registro no prontuário</div>
+              ) : (
+                historico.map(reg => (
+                  <div key={reg.id} className="border-l-4 border-blue-500 pl-3 py-2 bg-white rounded-r-lg">
+                    <div className="flex items-center gap-2 text-xs text-gray-500 mb-1 flex-wrap">
+                      <Clock size={10} />
+                      <span>{reg.data}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-xs ${reg.tipo === 'sistema' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                        {reg.tipo === 'sistema' ? '🤖 Sistema' : '📝 Manual'}
+                      </span>
+                    </div>
+                    <p className="text-gray-800 text-sm whitespace-pre-wrap">{reg.descricao}</p>
                   </div>
-                  <p className="text-gray-800 text-sm whitespace-pre-wrap">{reg.descricao}</p>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </>
         )}
 
         {activeTab === 'exames' && (
           <div>
-            <button 
-              onClick={() => setShowUploadModal(true)} 
-              className="mb-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm flex items-center gap-2 hover:bg-blue-700 transition"
-            >
+            <button onClick={() => setShowUploadModal(true)} className="mb-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm flex items-center gap-2 hover:bg-blue-700 transition">
               <Upload size={14} /> Adicionar Exame
             </button>
             {imagensPaciente.length === 0 ? (
               <div className="text-center py-8 text-gray-400 border-2 border-dashed rounded-lg">
                 <ImageIcon size={40} className="mx-auto mb-2" />
                 <p>Nenhum exame adicionado</p>
-                <p className="text-xs mt-1">Clique em "Adicionar Exame" para anexar raio-x ou fotos</p>
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-3">
                 {imagensPaciente.map(img => (
                   <div key={img.id} className="relative group">
-                    <img 
-                      src={img.url} 
-                      alt="Exame" 
-                      className="w-full h-24 object-cover rounded-lg cursor-pointer hover:opacity-90 transition" 
-                      onClick={() => setImagemSelecionada(img)} 
-                    />
-                    <button 
-                      onClick={() => deletarImagem(img.id)} 
-                      className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    <img src={img.url} className="w-full h-24 object-cover rounded-lg cursor-pointer" onClick={() => setImagemSelecionada(img)} />
+                    <button onClick={() => deletarImagem(img.id)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
                   </div>
                 ))}
               </div>
@@ -396,12 +429,188 @@ export default function ProntuarioView({
         )}
       </div>
 
-      {/* Modais - Templates, Prescrição, Retorno, Materiais, Imagens */}
-      {/* ... (restante dos modais iguais ao seu código original) ... */}
-      
-      {/* Os modais de Templates, Prescrição, Retorno, Materiais e Upload de Imagem permanecem iguais */}
-      {/* Para economizar espaço, mantenha os modais do seu código original aqui */}
-      
+      {/* Modal Templates */}
+      {showTemplates && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-semibold">📋 Templates de Anotações</h3>
+              <button onClick={() => setShowTemplates(false)}><X size={20} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {TEMPLATES.map(t => (
+                <button 
+                  key={t.id} 
+                  onClick={() => aplicarTemplate(t)} 
+                  className="w-full text-left p-3 hover:bg-blue-50 rounded-lg transition border border-gray-100"
+                >
+                  <p className="font-medium">{t.titulo}</p>
+                  <p className="text-xs text-gray-500 mt-1">{t.texto.substring(0, 80)}...</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Prescrição */}
+      {showPrescricao && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-semibold">💊 Prescrição Médica</h3>
+              <button onClick={() => setShowPrescricao(false)}><X size={20} /></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <select 
+                value={prescricao.medicamento} 
+                onChange={(e) => {
+                  const selectedMed = MEDICAMENTOS.find(m => `${m.nome} ${m.dosagem}` === e.target.value);
+                  setPrescricaoForm({
+                    ...prescricao, 
+                    medicamento: e.target.value,
+                    indicacao: selectedMed?.indicacao || ''
+                  });
+                }} 
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500"
+              >
+                <option value="">Selecione um medicamento</option>
+                {MEDICAMENTOS.map(m => (
+                  <option key={m.id} value={`${m.nome} ${m.dosagem}`}>
+                    {m.nome} {m.dosagem} - {m.indicacao}
+                  </option>
+                ))}
+              </select>
+              <textarea 
+                placeholder="Posologia (ex: Tomar 1 comprimido de 8/8h)" 
+                value={prescricao.posologia} 
+                onChange={(e) => setPrescricaoForm({...prescricao, posologia: e.target.value})} 
+                className="w-full p-2 border rounded-lg" 
+                rows="2" 
+              />
+              <textarea 
+                placeholder="Observações" 
+                value={prescricao.observacoes} 
+                onChange={(e) => setPrescricaoForm({...prescricao, observacoes: e.target.value})} 
+                className="w-full p-2 border rounded-lg" 
+                rows="2" 
+              />
+            </div>
+            <div className="p-4 border-t flex gap-2">
+              <button onClick={adicionarPrescricao} className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700">Adicionar Prescrição</button>
+              <button onClick={() => setShowPrescricao(false)} className="flex-1 bg-gray-200 py-2 rounded-lg">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Retorno */}
+      {showRetornoForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-semibold">📅 Agendar Retorno</h3>
+              <button onClick={() => setShowRetornoForm(false)}><X size={20} /></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <input 
+                type="date" 
+                value={retornoData.data} 
+                onChange={(e) => setRetornoData({...retornoData, data: e.target.value})} 
+                className="w-full p-2 border rounded-lg" 
+                min={new Date().toISOString().split('T')[0]} 
+              />
+              <input 
+                type="time" 
+                value={retornoData.horario} 
+                onChange={(e) => setRetornoData({...retornoData, horario: e.target.value})} 
+                className="w-full p-2 border rounded-lg" 
+              />
+              <input 
+                type="text" 
+                placeholder="Sala (opcional)" 
+                value={retornoData.sala} 
+                onChange={(e) => setRetornoData({...retornoData, sala: e.target.value})} 
+                className="w-full p-2 border rounded-lg" 
+              />
+              <textarea 
+                placeholder="Observações" 
+                value={retornoData.observacoes} 
+                onChange={(e) => setRetornoData({...retornoData, observacoes: e.target.value})} 
+                className="w-full p-2 border rounded-lg" 
+                rows="2" 
+              />
+            </div>
+            <div className="p-4 border-t flex gap-2">
+              <button onClick={solicitarRetorno} className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">Confirmar Retorno</button>
+              <button onClick={() => setShowRetornoForm(false)} className="flex-1 bg-gray-200 py-2 rounded-lg">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Materiais Consumidos */}
+      {showMateriaisModal && materiaisConsumidos && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md">
+            <div className="p-4 border-b bg-green-50 flex justify-between items-center">
+              <h3 className="font-semibold text-green-700">✅ Materiais Consumidos</h3>
+              <button onClick={() => setShowMateriaisModal(false)} className="text-green-600 hover:text-green-800"><X size={20} /></button>
+            </div>
+            <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
+              {materiaisConsumidos.map((m, i) => (
+                <div key={i} className="flex justify-between items-center border-b pb-2">
+                  <span className="font-medium">{m.materialNome}</span>
+                  <span>{m.quantidade} un - R$ {m.custo.toFixed(2)}</span>
+                </div>
+              ))}
+              <div className="pt-2 border-t font-bold flex justify-between">
+                <span>Total:</span>
+                <span className="text-green-600">R$ {materiaisConsumidos.reduce((s, m) => s + m.custo, 0).toFixed(2)}</span>
+              </div>
+            </div>
+            <div className="p-4 border-t">
+              <button onClick={() => { setShowMateriaisModal(false); }} className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700">Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Visualização Imagem */}
+      {imagemSelecionada && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50">
+          <button onClick={() => setImagemSelecionada(null)} className="absolute top-4 right-4 text-white"><X size={32} /></button>
+          <img src={imagemSelecionada.url} className="max-w-full max-h-full object-contain" />
+        </div>
+      )}
+
+      {/* Modal Upload Imagem */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-semibold">📸 Adicionar Exame</h3>
+              <button onClick={() => setShowUploadModal(false)}><X size={20} /></button>
+            </div>
+            <div className="p-4">
+              {uploadPreview ? (
+                <img src={uploadPreview} className="w-full h-48 object-cover rounded-lg mb-3" />
+              ) : (
+                <label className="border-2 border-dashed rounded-lg p-8 text-center block cursor-pointer hover:border-blue-500 transition">
+                  <Upload className="mx-auto mb-2 text-gray-400" size={32} />
+                  <p className="text-gray-500">Clique para selecionar uma imagem</p>
+                  <p className="text-xs text-gray-400 mt-1">PNG, JPG, JPEG até 5MB</p>
+                  <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files[0]; if (f) { const r = new FileReader(); r.onload = () => setUploadPreview(r.result); r.readAsDataURL(f); } }} className="hidden" />
+                </label>
+              )}
+            </div>
+            <div className="p-4 border-t flex gap-2">
+              {uploadPreview && <button onClick={handleAddImagem} className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">{uploading ? 'Enviando...' : 'Salvar'}</button>}
+              <button onClick={() => setShowUploadModal(false)} className="flex-1 bg-gray-200 py-2 rounded-lg">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
