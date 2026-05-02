@@ -41,7 +41,6 @@ export default function SecretarioDashboard() {
   const [mostrarFiltros, setMostrarFiltros] = useState(false);
   const [notificacoes, setNotificacoes] = useState([]);
   const [mostrarNotificacoes, setMostrarNotificacoes] = useState(false);
-  const [horaAtual, setHoraAtual] = useState(new Date());
   
   // Estado para cadastro rápido
   const [quickPaciente, setQuickPaciente] = useState({
@@ -60,14 +59,6 @@ export default function SecretarioDashboard() {
     horario: '09:00',
     sala: '01'
   });
-
-  // Atualizar hora atual para linha do tempo (a cada minuto)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setHoraAtual(new Date());
-    }, 60000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Verificar notificações de retorno pendente
   useEffect(() => {
@@ -101,10 +92,6 @@ export default function SecretarioDashboard() {
         setShowQuickPaciente(false);
         setShowQuickAgendamento(false);
         setMostrarNotificacoes(false);
-      }
-      if (e.key === 'F5') {
-        e.preventDefault();
-        window.location.reload();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -162,18 +149,6 @@ export default function SecretarioDashboard() {
     const procedimento = procedimentos.find(p => p.id == quickAgendamento.procedimento_id);
     const dentista = dentistas.find(d => d.id == quickAgendamento.dentista_id);
     
-    // Verificar conflito de horário
-    const conflito = agendamentos.find(ag => 
-      ag.data === quickAgendamento.data && 
-      ag.horario === quickAgendamento.horario && 
-      ag.sala === quickAgendamento.sala
-    );
-    
-    if (conflito) {
-      showToast(`Horário já ocupado na Sala ${quickAgendamento.sala} às ${quickAgendamento.horario}`, 'error');
-      return;
-    }
-    
     const valorComDesconto = procedimento?.valor || 0;
     
     const novoAgendamento = {
@@ -210,10 +185,16 @@ export default function SecretarioDashboard() {
     setPacienteSelecionado(null);
   };
 
-  // Função para mover agendamento
+  // Função para mover agendamento (drag & drop)
   const handleAgendamentoMove = (agendamentoAtualizado) => {
     atualizarAgendamento(agendamentoAtualizado);
     showToast(`Agendamento remarcado com sucesso!`, 'success');
+  };
+
+  // Função para editar agendamento
+  const handleAgendamentoClick = (agendamento) => {
+    console.log('Agendamento selecionado:', agendamento);
+    showToast(`Clique para editar: ${agendamento.paciente_nome}`, 'info');
   };
 
   // Limpar filtros
@@ -223,27 +204,31 @@ export default function SecretarioDashboard() {
     setSearchTerm('');
   };
 
-  // Próximos atendimentos (próximas 4 horas)
+  // Próximos atendimentos
   const agora = new Date();
   const horaAtualNum = agora.getHours();
+  const hojeStr = new Date().toISOString().split('T')[0];
   const proximosAtendimentos = agendamentos
     .filter(ag => {
       if (!ag.horario || ag.status === 'cancelado') return false;
       const horaAg = parseInt(ag.horario.split(':')[0]);
-      return ag.data === new Date().toISOString().split('T')[0] && horaAg >= horaAtualNum && horaAg <= horaAtualNum + 4;
+      return ag.data === hojeStr && horaAg >= horaAtualNum && horaAg <= horaAtualNum + 4;
     })
     .slice(0, 5);
 
   const stats = {
     totalPacientes: pacientes.length,
     totalAgendamentos: agendamentos.length,
-    agendamentosHoje: agendamentos.filter(ag => ag.data === new Date().toISOString().split('T')[0]).length,
+    agendamentosHoje: agendamentos.filter(ag => ag.data === hojeStr).length,
     atrasados: agendamentos.filter(ag => {
       if (!ag.horario || ag.status === 'cancelado') return false;
       const horaAg = parseInt(ag.horario.split(':')[0]);
-      return ag.data === new Date().toISOString().split('T')[0] && horaAg < horaAtualNum;
+      return ag.data === hojeStr && horaAg < horaAtualNum;
     }).length
   };
+
+  // Salas para o calendário
+  const salas = salaSelecionada === 'todas' ? ['01', '02', '03'] : [salaSelecionada];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -416,12 +401,12 @@ export default function SecretarioDashboard() {
             placeholder="Buscar paciente..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full pl-9 pr-3 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
           />
         </div>
       </div>
 
-      {/* Calendário Interativo com linha do tempo */}
+      {/* Calendário Interativo */}
       <div className="max-w-7xl mx-auto px-4 pb-6">
         <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
           <div className="p-3 border-b bg-gray-50 flex justify-between items-center">
@@ -448,26 +433,23 @@ export default function SecretarioDashboard() {
                 <RefreshCw size={14} />
               </button>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-              <span className="text-[10px] text-gray-400">Tempo real</span>
+            <div className="text-[10px] text-gray-400">
+              {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
             </div>
           </div>
           
           <CalendarioInterativo
             agendamentos={agendamentos}
             dentistas={dentistas}
-            salas={salaSelecionada === 'todas' ? ['01', '02', '03'] : [salaSelecionada]}
+            salas={salas}
             visualizacao={visualizacao}
-            filtroDentista={dentistaSelecionado}
-            horaAtual={horaAtual}
             onAgendamentoClick={handleAgendamentoClick}
             onAgendamentoMove={handleAgendamentoMove}
           />
         </div>
       </div>
 
-      {/* Resultados da Busca (Popover em vez de embaixo) */}
+      {/* Resultados da Busca (Popover) */}
       {searchTerm && pacientesFiltrados.length > 0 && (
         <div className="fixed bottom-4 right-4 w-80 bg-white rounded-xl shadow-2xl border z-40 overflow-hidden animate-in slide-in-from-right-5 duration-200">
           <div className="p-2 bg-blue-50 border-b flex justify-between items-center">
@@ -499,7 +481,6 @@ export default function SecretarioDashboard() {
         </div>
       )}
 
-      {/* Modais (mantidos os mesmos) */}
       {/* Modal de Cadastro Rápido de Paciente */}
       {showQuickPaciente && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
