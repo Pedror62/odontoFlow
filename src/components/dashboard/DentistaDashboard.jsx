@@ -1,5 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, ChevronRight, LogOut, Activity, Users, ClipboardList, Play, PauseCircle, CheckCircle, XCircle, AlertCircle, Calendar as CalendarIcon, ArrowRight, ArrowLeft, Eye } from 'lucide-react';
+import { 
+  Calendar, Clock, ChevronRight, LogOut, Activity, Users, ClipboardList, 
+  Play, PauseCircle, CheckCircle, XCircle, AlertCircle, Calendar as CalendarIcon, 
+  ArrowRight, ArrowLeft, Eye, Search, Download, Sun, Moon, TrendingUp, 
+  AlarmClock, CheckCheck, Timer, User
+} from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useMaterial } from '../../contexts/MaterialContext';
@@ -29,7 +34,9 @@ export default function DentistaDashboard() {
   
   const [atendimentoAtivo, setAtendimentoAtivo] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [modalVisualizacao, setModalVisualizacao] = useState(null); // Para visualizar agendamentos de ontem/amanhã
+  const [modalVisualizacao, setModalVisualizacao] = useState(null);
+  const [buscaTermo, setBuscaTermo] = useState('');
+  const [temaEscuro, setTemaEscuro] = useState(false);
   
   // Obter datas
   const hoje = new Date().toISOString().split('T')[0];
@@ -57,13 +64,11 @@ export default function DentistaDashboard() {
       return isDentista;
     });
     
-    // Separar por status e data
     const hojeList = filtrados.filter(ag => ag.data === hoje && ag.status !== 'concluido' && ag.status !== 'cancelado');
     const amanhaList = filtrados.filter(ag => ag.data === amanhaStr && ag.status !== 'concluido' && ag.status !== 'cancelado');
     const ontemList = filtrados.filter(ag => ag.data === ontemStr && ag.status !== 'concluido' && ag.status !== 'cancelado');
     const concluidosList = filtrados.filter(ag => ag.status === 'concluido');
     
-    // Ordenar por horário
     const ordenar = (a, b) => (a.horario || '00:00').localeCompare(b.horario || '00:00');
     
     setAgendamentosHoje(hojeList.sort(ordenar));
@@ -73,13 +78,48 @@ export default function DentistaDashboard() {
     setLoading(false);
   }, [agendamentos, user]);
 
+  // Função para filtrar por busca
+  const filtrarPorBusca = (lista) => {
+    if (!buscaTermo) return lista;
+    const termo = buscaTermo.toLowerCase();
+    return lista.filter(ag => 
+      ag.paciente_nome?.toLowerCase().includes(termo) ||
+      ag.procedimento_nome?.toLowerCase().includes(termo) ||
+      ag.sala?.includes(termo)
+    );
+  };
+
+  // Função para verificar atraso (horário já passou)
+  const verificarAtraso = (horario) => {
+    const agora = new Date();
+    const horaAtual = agora.getHours();
+    const minutoAtual = agora.getMinutes();
+    const [horaAg, minutoAg] = horario.split(':').map(Number);
+    
+    if (horaAg < horaAtual || (horaAg === horaAtual && minutoAg < minutoAtual)) {
+      return true;
+    }
+    return false;
+  };
+
+  // Estatísticas do dia
+  const resumoDia = {
+    total: agendamentosHoje.length,
+    concluidos: agendamentosConcluidos.filter(ag => ag.data === hoje).length,
+    em_andamento: atendimentoAtivo ? 1 : 0,
+    pausados: atendimentosPausados?.filter(p => p.dentista === user?.nome && new Date(p.pausado_em).toDateString() === new Date().toDateString()).length || 0,
+    atrasados: agendamentosHoje.filter(ag => verificarAtraso(ag.horario)).length,
+    taxaConclusao: agendamentosHoje.length > 0 
+      ? Math.round((agendamentosConcluidos.filter(ag => ag.data === hoje).length / agendamentosHoje.length) * 100) 
+      : 0
+  };
+
   const handleLogout = () => {
     logout();
     showToast('Logout realizado com sucesso!', 'success');
     navigate('/login');
   };
 
-  // Função para iniciar atendimento (apenas para HOJE)
   const iniciarAtendimento = (agendamento) => {
     if (atendimentoAtivo) {
       showToast(`Você já está atendendo ${atendimentoAtivo.paciente_nome}. Finalize ou pause antes de iniciar outro.`, 'error');
@@ -113,7 +153,6 @@ export default function DentistaDashboard() {
     showToast(`Atendimento de ${agendamento.paciente_nome} iniciado!`, 'success');
   };
 
-  // Função para visualizar agendamento (apenas leitura - para ontem/amanhã)
   const visualizarAgendamento = (agendamento) => {
     const pacienteCompleto = pacientes.find(p => p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome);
     setModalVisualizacao({
@@ -123,10 +162,7 @@ export default function DentistaDashboard() {
   };
 
   const pausarAtendimento = () => {
-    if (!atendimentoAtivo) {
-      showToast('Nenhum atendimento ativo para pausar', 'error');
-      return;
-    }
+    if (!atendimentoAtivo) return;
     
     const novoPausado = {
       id: Date.now(),
@@ -143,7 +179,7 @@ export default function DentistaDashboard() {
     pausarAtendimentoGlobal(novoPausado);
     atualizarAgendamento({ ...atendimentoAtivo, status: 'pausado' });
     setAtendimentoAtivo(null);
-    showToast(`Atendimento de ${novoPausado.paciente} pausado! Clique no card amarelo para retomar.`, 'info');
+    showToast(`Atendimento de ${novoPausado.paciente} pausado!`, 'info');
   };
 
   const retomarAtendimento = (pausado) => {
@@ -186,14 +222,11 @@ export default function DentistaDashboard() {
     };
     
     adicionarAgendamento(novoRetorno);
-    showToast(`Retorno solicitado para ${retorno.data} às ${retorno.horario}! Secretária notificada.`, 'success');
+    showToast(`Retorno solicitado para ${retorno.data} às ${retorno.horario}!`, 'success');
   };
 
   const finalizarAtendimento = async () => {
-    if (!atendimentoAtivo) {
-      showToast('Nenhum atendimento ativo', 'error');
-      return;
-    }
+    if (!atendimentoAtivo) return;
     
     let procedimentoId = atendimentoAtivo.procedimento_id;
     if (!procedimentoId) {
@@ -219,7 +252,7 @@ export default function DentistaDashboard() {
     
     atualizarAgendamento({ ...atendimentoAtivo, status: 'concluido' });
     setAtendimentoAtivo(null);
-    showToast(`Atendimento finalizado! Materiais: R$ ${resultado.consumo?.reduce((s, i) => s + i.custo, 0).toFixed(2) || '0,00'}`, 'success');
+    showToast(`Atendimento finalizado!`, 'success');
   };
 
   const stats = {
@@ -240,18 +273,17 @@ export default function DentistaDashboard() {
   const KanbanCard = ({ agendamento, onClick, onVisualizar, disabled, isVisualizacaoOnly = false }) => {
     const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === agendamento.id);
     const isActive = atendimentoAtivo?.id === agendamento.id;
+    const estaAtrasado = verificarAtraso(agendamento.horario);
     
     const getStatusIcon = () => {
       if (isActive) return <Activity size={14} className="text-blue-500 animate-pulse" />;
       if (estaPausado) return <PauseCircle size={14} className="text-orange-500" />;
-      if (agendamento.status === 'concluido') return <CheckCircle size={14} className="text-green-500" />;
       return <Clock size={14} className="text-gray-400" />;
     };
     
     const getStatusText = () => {
       if (isActive) return 'Em andamento';
       if (estaPausado) return 'Pausado';
-      if (agendamento.status === 'concluido') return 'Concluído';
       return 'Agendado';
     };
     
@@ -269,6 +301,7 @@ export default function DentistaDashboard() {
         className={`bg-white rounded-xl border p-3 mb-2 transition-all hover:shadow-md
           ${isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''}
           ${estaPausado ? 'border-orange-300 bg-orange-50' : 'border-gray-100'}
+          ${estaAtrasado && !isActive && !estaPausado ? 'border-red-300 bg-red-50' : ''}
           ${disabled && !isVisualizacaoOnly ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-[1.01]'}
         `}
       >
@@ -277,10 +310,13 @@ export default function DentistaDashboard() {
             <div className="flex items-center gap-2 mb-1">
               {getStatusIcon()}
               <span className="font-semibold text-gray-800">{agendamento.paciente_nome}</span>
+              {estaAtrasado && !isActive && !estaPausado && (
+                <span className="text-red-500 text-[10px] bg-red-100 px-1 rounded">⏰ Atrasado</span>
+              )}
             </div>
             <div className="flex items-center gap-2 text-xs text-gray-500">
               <Clock size={12} />
-              <span>{agendamento.horario}</span>
+              <span className={estaAtrasado && !isActive ? 'text-red-600 font-medium' : ''}>{agendamento.horario}</span>
               <span className="text-gray-300">•</span>
               <span>Sala {agendamento.sala}</span>
             </div>
@@ -290,23 +326,17 @@ export default function DentistaDashboard() {
             <span className={`text-[10px] px-2 py-0.5 rounded-full ${
               isActive ? 'bg-blue-100 text-blue-700' :
               estaPausado ? 'bg-orange-100 text-orange-700' :
-              agendamento.status === 'concluido' ? 'bg-green-100 text-green-700' :
               'bg-gray-100 text-gray-600'
             }`}>
               {getStatusText()}
             </span>
             {isVisualizacaoOnly && (
               <div className="text-[10px] text-gray-400 mt-1 flex items-center justify-end gap-1">
-                <Eye size={10} /> Apenas visualização
+                <Eye size={10} /> Visualizar
               </div>
             )}
           </div>
         </div>
-        {disabled && !isVisualizacaoOnly && (
-          <div className="text-[10px] text-gray-400 mt-2 flex items-center gap-1">
-            <AlertCircle size={10} /> Aguardando finalizar {atendimentoAtivo?.paciente_nome}
-          </div>
-        )}
       </div>
     );
   };
@@ -322,22 +352,32 @@ export default function DentistaDashboard() {
     );
   }
 
+  const agendamentosHojeFiltrados = filtrarPorBusca(agendamentosHoje);
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className={`min-h-screen ${temaEscuro ? 'bg-gray-900' : 'bg-gray-50'} transition-colors duration-300`}>
       {/* Header */}
-      <div className="bg-white shadow-sm border-b sticky top-0 z-20">
+      <div className={`${temaEscuro ? 'bg-gray-800 border-gray-700' : 'bg-white'} shadow-sm border-b sticky top-0 z-20`}>
         <div className="max-w-7xl mx-auto px-4 py-3">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center flex-wrap gap-2">
             <div className="flex items-center gap-3">
               <div className="bg-blue-100 p-2 rounded-lg">
                 <Activity className="text-blue-600" size={24} />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-800">Painel do Dentista</h1>
-                <p className="text-xs text-gray-500">{user?.nome} - Gerencie seus atendimentos</p>
+                <h1 className={`text-xl font-bold ${temaEscuro ? 'text-white' : 'text-gray-800'}`}>Painel do Dentista</h1>
+                <p className={`text-xs ${temaEscuro ? 'text-gray-400' : 'text-gray-500'}`}>{user?.nome} - Gerencie seus atendimentos</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
+              {/* Toggle tema escuro */}
+              <button 
+                onClick={() => setTemaEscuro(!temaEscuro)}
+                className="p-2 rounded-lg hover:bg-gray-100 transition"
+              >
+                {temaEscuro ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              
               {atendimentoAtivo && (
                 <div className="flex items-center gap-2 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
                   <Activity size={14} className="animate-pulse" />
@@ -358,29 +398,47 @@ export default function DentistaDashboard() {
         onRetomar={retomarAtendimento} 
       />
 
-      {/* Stats Cards */}
-      <div className="max-w-7xl mx-auto px-4 py-4">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl p-3 text-white">
-            <p className="text-xs opacity-90">Hoje</p>
-            <p className="text-2xl font-bold">{stats.totalHoje}</p>
+      {/* Resumo do Dia - NOVO */}
+      <div className={`max-w-7xl mx-auto px-4 py-4`}>
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
+            <p className="text-xs text-gray-400">Total Hoje</p>
+            <p className="text-2xl font-bold text-blue-600">{resumoDia.total}</p>
           </div>
-          <div className="bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl p-3 text-white">
-            <p className="text-xs opacity-90">Amanhã</p>
-            <p className="text-2xl font-bold">{stats.totalAmanha}</p>
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
+            <p className="text-xs text-gray-400">Concluídos</p>
+            <p className="text-2xl font-bold text-green-600">{resumoDia.concluidos}</p>
           </div>
-          <div className="bg-gradient-to-r from-gray-500 to-gray-600 rounded-xl p-3 text-white">
-            <p className="text-xs opacity-90">Ontem</p>
-            <p className="text-2xl font-bold">{stats.totalOntem}</p>
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
+            <p className="text-xs text-gray-400">Em Andamento</p>
+            <p className="text-2xl font-bold text-yellow-600">{resumoDia.em_andamento}</p>
           </div>
-          <div className="bg-gradient-to-r from-green-500 to-green-600 rounded-xl p-3 text-white">
-            <p className="text-xs opacity-90">Concluídos</p>
-            <p className="text-2xl font-bold">{stats.concluidos}</p>
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
+            <p className="text-xs text-gray-400">Pausados</p>
+            <p className="text-2xl font-bold text-orange-600">{resumoDia.pausados}</p>
           </div>
-          <div className="bg-gradient-to-r from-yellow-500 to-yellow-600 rounded-xl p-3 text-white">
-            <p className="text-xs opacity-90">Pausados</p>
-            <p className="text-2xl font-bold">{stats.pausados}</p>
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
+            <p className="text-xs text-gray-400">Atrasados</p>
+            <p className="text-2xl font-bold text-red-600">{resumoDia.atrasados}</p>
           </div>
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-white'} rounded-xl p-3 shadow-sm`}>
+            <p className="text-xs text-gray-400">Taxa de Conclusão</p>
+            <p className="text-2xl font-bold text-purple-600">{resumoDia.taxaConclusao}%</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Barra de Busca - NOVO */}
+      <div className="max-w-7xl mx-auto px-4 pb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+          <input
+            type="text"
+            placeholder="Buscar paciente por nome, procedimento ou sala..."
+            value={buscaTermo}
+            onChange={(e) => setBuscaTermo(e.target.value)}
+            className={`w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${temaEscuro ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-200'}`}
+          />
         </div>
       </div>
 
@@ -388,22 +446,19 @@ export default function DentistaDashboard() {
       <div className="flex-1 overflow-x-auto max-w-7xl mx-auto px-4 pb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 min-w-[600px]">
           
-          {/* Coluna ONTEM - APENAS VISUALIZAÇÃO */}
-          <div className="bg-gray-100 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-250px)]">
-            <div className="p-3 bg-gray-200 border-b">
+          {/* Coluna ONTEM */}
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-gray-100'} rounded-xl overflow-hidden flex flex-col h-[calc(100vh-350px)]`}>
+            <div className="p-3 bg-gray-200 border-b dark:bg-gray-700">
               <div className="flex items-center gap-2">
                 <ArrowLeft size={16} className="text-gray-500" />
-                <h2 className="font-bold text-gray-700">📅 Ontem</h2>
+                <h2 className="font-bold text-gray-700 dark:text-gray-300">📅 Ontem</h2>
                 <span className="text-xs bg-gray-400 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(ontemStr)}</span>
-                <span className="text-[10px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">🔒 Somente leitura</span>
+                <span className="text-[10px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">🔒 Leitura</span>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {agendamentosOntem.length === 0 ? (
-                <div className="text-center py-8 text-gray-400 text-sm">
-                  <CalendarIcon size={32} className="mx-auto mb-2 opacity-50" />
-                  Nenhum atendimento
-                </div>
+                <div className="text-center py-8 text-gray-400 text-sm">Nenhum atendimento</div>
               ) : (
                 agendamentosOntem.map(ag => (
                   <KanbanCard 
@@ -419,24 +474,26 @@ export default function DentistaDashboard() {
             </div>
           </div>
 
-          {/* Coluna HOJE - PODE INICIAR ATENDIMENTO */}
-          <div className="bg-blue-50 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-250px)] ring-2 ring-blue-200">
-            <div className="p-3 bg-blue-100 border-b">
+          {/* Coluna HOJE */}
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-blue-50'} rounded-xl overflow-hidden flex flex-col h-[calc(100vh-350px)] ring-2 ring-blue-200`}>
+            <div className="p-3 bg-blue-100 border-b dark:bg-blue-900">
               <div className="flex items-center gap-2">
                 <CalendarIcon size={16} className="text-blue-600" />
-                <h2 className="font-bold text-blue-800">📅 Hoje</h2>
+                <h2 className="font-bold text-blue-800 dark:text-blue-200">📅 Hoje</h2>
                 <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(hoje)}</span>
-                <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✅ Disponível para atendimento</span>
+                <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✅ Disponível</span>
               </div>
+              {buscaTermo && agendamentosHojeFiltrados.length !== agendamentosHoje.length && (
+                <p className="text-xs text-blue-600 mt-1">Encontrados {agendamentosHojeFiltrados.length} de {agendamentosHoje.length}</p>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto p-2">
-              {agendamentosHoje.length === 0 ? (
+              {agendamentosHojeFiltrados.length === 0 ? (
                 <div className="text-center py-8 text-gray-400 text-sm">
-                  <CalendarIcon size={32} className="mx-auto mb-2 opacity-50" />
-                  Nenhum atendimento hoje
+                  {buscaTermo ? 'Nenhum resultado encontrado' : 'Nenhum atendimento hoje'}
                 </div>
               ) : (
-                agendamentosHoje.map(ag => (
+                agendamentosHojeFiltrados.map(ag => (
                   <KanbanCard 
                     key={ag.id} 
                     agendamento={ag} 
@@ -449,22 +506,19 @@ export default function DentistaDashboard() {
             </div>
           </div>
 
-          {/* Coluna AMANHÃ - APENAS VISUALIZAÇÃO */}
-          <div className="bg-purple-50 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-250px)]">
-            <div className="p-3 bg-purple-100 border-b">
+          {/* Coluna AMANHÃ */}
+          <div className={`${temaEscuro ? 'bg-gray-800' : 'bg-purple-50'} rounded-xl overflow-hidden flex flex-col h-[calc(100vh-350px)]`}>
+            <div className="p-3 bg-purple-100 border-b dark:bg-purple-900">
               <div className="flex items-center gap-2">
                 <ArrowRight size={16} className="text-purple-500" />
-                <h2 className="font-bold text-purple-800">📅 Amanhã</h2>
+                <h2 className="font-bold text-purple-800 dark:text-purple-200">📅 Amanhã</h2>
                 <span className="text-xs bg-purple-500 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(amanhaStr)}</span>
-                <span className="text-[10px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">🔒 Somente leitura</span>
+                <span className="text-[10px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">🔒 Leitura</span>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {agendamentosAmanha.length === 0 ? (
-                <div className="text-center py-8 text-gray-400 text-sm">
-                  <CalendarIcon size={32} className="mx-auto mb-2 opacity-50" />
-                  Nenhum atendimento amanhã
-                </div>
+                <div className="text-center py-8 text-gray-400 text-sm">Nenhum atendimento amanhã</div>
               ) : (
                 agendamentosAmanha.map(ag => (
                   <KanbanCard 
@@ -481,10 +535,11 @@ export default function DentistaDashboard() {
         </div>
       </div>
 
-      {/* Modal de Prontuário para Atendimento Ativo */}
+      {/* Modais existentes... */}
+      {/* Modal de Atendimento Ativo */}
       {atendimentoAtivo && (
         <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <div className={`bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col ${temaEscuro ? 'dark' : ''}`}>
             <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-blue-50 to-white">
               <div className="flex items-center gap-2">
                 <Activity size={20} className="text-blue-600" />
@@ -516,20 +571,17 @@ export default function DentistaDashboard() {
         </div>
       )}
 
-      {/* Modal de Visualização (Somente leitura - para ontem/amanhã) */}
+      {/* Modal de Visualização */}
       {modalVisualizacao && (
         <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+          <div className={`bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col ${temaEscuro ? 'dark' : ''}`}>
             <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-gray-50 to-white">
               <div className="flex items-center gap-2">
                 <Eye size={20} className="text-gray-500" />
                 <h2 className="font-bold">Visualização de Agendamento</h2>
                 <span className="text-sm text-gray-500">| {modalVisualizacao.paciente_nome}</span>
               </div>
-              <button 
-                onClick={() => setModalVisualizacao(null)}
-                className="text-gray-400 hover:text-gray-600"
-              >
+              <button onClick={() => setModalVisualizacao(null)} className="text-gray-400 hover:text-gray-600">
                 <XCircle size={24} />
               </button>
             </div>
@@ -551,27 +603,10 @@ export default function DentistaDashboard() {
                   <p className="text-xs text-gray-400 uppercase">Sala</p>
                   <p className="font-medium">Sala {modalVisualizacao.sala}</p>
                 </div>
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <p className="text-xs text-gray-400 uppercase">Dentista</p>
-                  <p className="font-medium">{modalVisualizacao.dentista_nome}</p>
-                </div>
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <p className="text-xs text-gray-400 uppercase">Status</p>
-                  <p className="font-medium capitalize">{modalVisualizacao.status}</p>
-                </div>
               </div>
-              {modalVisualizacao.valor_final && (
-                <div className="bg-green-50 p-3 rounded-lg">
-                  <p className="text-xs text-gray-400 uppercase">Valor</p>
-                  <p className="font-medium text-green-600">R$ {modalVisualizacao.valor_final.toFixed(2)}</p>
-                </div>
-              )}
             </div>
             <div className="p-4 border-t bg-gray-50">
-              <button 
-                onClick={() => setModalVisualizacao(null)}
-                className="w-full bg-gray-600 text-white py-2 rounded-lg hover:bg-gray-700 transition"
-              >
+              <button onClick={() => setModalVisualizacao(null)} className="w-full bg-gray-600 text-white py-2 rounded-lg hover:bg-gray-700 transition">
                 Fechar
               </button>
             </div>
