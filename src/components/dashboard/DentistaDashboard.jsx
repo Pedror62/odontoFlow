@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, ChevronRight, LogOut, Activity, Users, ClipboardList, Play, PauseCircle, CheckCircle, XCircle, AlertCircle, Calendar as CalendarIcon, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Calendar, Clock, ChevronRight, LogOut, Activity, Users, ClipboardList, Play, PauseCircle, CheckCircle, XCircle, AlertCircle, Calendar as CalendarIcon, ArrowRight, ArrowLeft, Eye } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useMaterial } from '../../contexts/MaterialContext';
@@ -29,6 +29,7 @@ export default function DentistaDashboard() {
   
   const [atendimentoAtivo, setAtendimentoAtivo] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [modalVisualizacao, setModalVisualizacao] = useState(null); // Para visualizar agendamentos de ontem/amanhã
   
   // Obter datas
   const hoje = new Date().toISOString().split('T')[0];
@@ -78,7 +79,8 @@ export default function DentistaDashboard() {
     navigate('/login');
   };
 
-  const selecionarAtendimento = (agendamento) => {
+  // Função para iniciar atendimento (apenas para HOJE)
+  const iniciarAtendimento = (agendamento) => {
     if (atendimentoAtivo) {
       showToast(`Você já está atendendo ${atendimentoAtivo.paciente_nome}. Finalize ou pause antes de iniciar outro.`, 'error');
       return;
@@ -109,6 +111,15 @@ export default function DentistaDashboard() {
     });
     
     showToast(`Atendimento de ${agendamento.paciente_nome} iniciado!`, 'success');
+  };
+
+  // Função para visualizar agendamento (apenas leitura - para ontem/amanhã)
+  const visualizarAgendamento = (agendamento) => {
+    const pacienteCompleto = pacientes.find(p => p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome);
+    setModalVisualizacao({
+      ...agendamento,
+      paciente: pacienteCompleto || { nome: agendamento.paciente_nome }
+    });
   };
 
   const pausarAtendimento = () => {
@@ -226,7 +237,7 @@ export default function DentistaDashboard() {
   };
 
   // Componente de card Kanban
-  const KanbanCard = ({ agendamento, onClick, disabled }) => {
+  const KanbanCard = ({ agendamento, onClick, onVisualizar, disabled, isVisualizacaoOnly = false }) => {
     const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === agendamento.id);
     const isActive = atendimentoAtivo?.id === agendamento.id;
     
@@ -244,13 +255,21 @@ export default function DentistaDashboard() {
       return 'Agendado';
     };
     
+    const handleClick = () => {
+      if (isVisualizacaoOnly) {
+        onVisualizar?.(agendamento);
+      } else if (!disabled) {
+        onClick?.(agendamento);
+      }
+    };
+    
     return (
       <div 
-        onClick={() => !disabled && onClick(agendamento)} 
+        onClick={handleClick}
         className={`bg-white rounded-xl border p-3 mb-2 transition-all hover:shadow-md
           ${isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''}
           ${estaPausado ? 'border-orange-300 bg-orange-50' : 'border-gray-100'}
-          ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-[1.01]'}
+          ${disabled && !isVisualizacaoOnly ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-[1.01]'}
         `}
       >
         <div className="flex justify-between items-start">
@@ -276,9 +295,14 @@ export default function DentistaDashboard() {
             }`}>
               {getStatusText()}
             </span>
+            {isVisualizacaoOnly && (
+              <div className="text-[10px] text-gray-400 mt-1 flex items-center justify-end gap-1">
+                <Eye size={10} /> Apenas visualização
+              </div>
+            )}
           </div>
         </div>
-        {disabled && (
+        {disabled && !isVisualizacaoOnly && (
           <div className="text-[10px] text-gray-400 mt-2 flex items-center gap-1">
             <AlertCircle size={10} /> Aguardando finalizar {atendimentoAtivo?.paciente_nome}
           </div>
@@ -364,13 +388,14 @@ export default function DentistaDashboard() {
       <div className="flex-1 overflow-x-auto max-w-7xl mx-auto px-4 pb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 min-w-[600px]">
           
-          {/* Coluna ONTEM */}
+          {/* Coluna ONTEM - APENAS VISUALIZAÇÃO */}
           <div className="bg-gray-100 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-250px)]">
             <div className="p-3 bg-gray-200 border-b">
               <div className="flex items-center gap-2">
                 <ArrowLeft size={16} className="text-gray-500" />
                 <h2 className="font-bold text-gray-700">📅 Ontem</h2>
                 <span className="text-xs bg-gray-400 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(ontemStr)}</span>
+                <span className="text-[10px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">🔒 Somente leitura</span>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
@@ -384,21 +409,24 @@ export default function DentistaDashboard() {
                   <KanbanCard 
                     key={ag.id} 
                     agendamento={ag} 
-                    onClick={selecionarAtendimento}
-                    disabled={!!atendimentoAtivo && atendimentoAtivo.id !== ag.id}
+                    onClick={() => {}} 
+                    onVisualizar={visualizarAgendamento}
+                    isVisualizacaoOnly={true}
+                    disabled={false}
                   />
                 ))
               )}
             </div>
           </div>
 
-          {/* Coluna HOJE */}
+          {/* Coluna HOJE - PODE INICIAR ATENDIMENTO */}
           <div className="bg-blue-50 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-250px)] ring-2 ring-blue-200">
             <div className="p-3 bg-blue-100 border-b">
               <div className="flex items-center gap-2">
                 <CalendarIcon size={16} className="text-blue-600" />
                 <h2 className="font-bold text-blue-800">📅 Hoje</h2>
                 <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(hoje)}</span>
+                <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✅ Disponível para atendimento</span>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
@@ -412,21 +440,23 @@ export default function DentistaDashboard() {
                   <KanbanCard 
                     key={ag.id} 
                     agendamento={ag} 
-                    onClick={selecionarAtendimento}
+                    onClick={iniciarAtendimento}
                     disabled={!!atendimentoAtivo && atendimentoAtivo.id !== ag.id}
+                    isVisualizacaoOnly={false}
                   />
                 ))
               )}
             </div>
           </div>
 
-          {/* Coluna AMANHÃ */}
+          {/* Coluna AMANHÃ - APENAS VISUALIZAÇÃO */}
           <div className="bg-purple-50 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-250px)]">
             <div className="p-3 bg-purple-100 border-b">
               <div className="flex items-center gap-2">
                 <ArrowRight size={16} className="text-purple-500" />
                 <h2 className="font-bold text-purple-800">📅 Amanhã</h2>
                 <span className="text-xs bg-purple-500 text-white px-2 py-0.5 rounded-full">{formatarDataLegivel(amanhaStr)}</span>
+                <span className="text-[10px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded-full">🔒 Somente leitura</span>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
@@ -440,8 +470,9 @@ export default function DentistaDashboard() {
                   <KanbanCard 
                     key={ag.id} 
                     agendamento={ag} 
-                    onClick={selecionarAtendimento}
-                    disabled={!!atendimentoAtivo && atendimentoAtivo.id !== ag.id}
+                    onClick={() => {}} 
+                    onVisualizar={visualizarAgendamento}
+                    isVisualizacaoOnly={true}
                   />
                 ))
               )}
@@ -450,7 +481,7 @@ export default function DentistaDashboard() {
         </div>
       </div>
 
-      {/* Prontuário (Modal/Drawer quando atendimento ativo) */}
+      {/* Modal de Prontuário para Atendimento Ativo */}
       {atendimentoAtivo && (
         <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
@@ -480,6 +511,69 @@ export default function DentistaDashboard() {
                 onPedirRetorno={pedirRetorno}
                 onFinalizar={finalizarAtendimento}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Visualização (Somente leitura - para ontem/amanhã) */}
+      {modalVisualizacao && (
+        <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-gray-50 to-white">
+              <div className="flex items-center gap-2">
+                <Eye size={20} className="text-gray-500" />
+                <h2 className="font-bold">Visualização de Agendamento</h2>
+                <span className="text-sm text-gray-500">| {modalVisualizacao.paciente_nome}</span>
+              </div>
+              <button 
+                onClick={() => setModalVisualizacao(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XCircle size={24} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="text-xs text-gray-400 uppercase">Paciente</p>
+                  <p className="font-medium">{modalVisualizacao.paciente_nome}</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="text-xs text-gray-400 uppercase">Procedimento</p>
+                  <p className="font-medium">{modalVisualizacao.procedimento_nome}</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="text-xs text-gray-400 uppercase">Data e Horário</p>
+                  <p className="font-medium">{formatarDataLegivel(modalVisualizacao.data)} às {modalVisualizacao.horario}</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="text-xs text-gray-400 uppercase">Sala</p>
+                  <p className="font-medium">Sala {modalVisualizacao.sala}</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="text-xs text-gray-400 uppercase">Dentista</p>
+                  <p className="font-medium">{modalVisualizacao.dentista_nome}</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="text-xs text-gray-400 uppercase">Status</p>
+                  <p className="font-medium capitalize">{modalVisualizacao.status}</p>
+                </div>
+              </div>
+              {modalVisualizacao.valor_final && (
+                <div className="bg-green-50 p-3 rounded-lg">
+                  <p className="text-xs text-gray-400 uppercase">Valor</p>
+                  <p className="font-medium text-green-600">R$ {modalVisualizacao.valor_final.toFixed(2)}</p>
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t bg-gray-50">
+              <button 
+                onClick={() => setModalVisualizacao(null)}
+                className="w-full bg-gray-600 text-white py-2 rounded-lg hover:bg-gray-700 transition"
+              >
+                Fechar
+              </button>
             </div>
           </div>
         </div>
