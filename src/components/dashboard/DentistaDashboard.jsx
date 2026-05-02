@@ -39,10 +39,13 @@ export default function DentistaDashboard() {
   const [modalVisualizacao, setModalVisualizacao] = useState(null);
   const [buscaTermo, setBuscaTermo] = useState('');
   const [temaEscuro, setTemaEscuro] = useState(false);
-  const [tooltipInfo, setTooltipInfo] = useState(null);
-  const [historicoRapido, setHistoricoRapido] = useState(null);
   const [tempoAtendimento, setTempoAtendimento] = useState(0);
   const [timerAtivo, setTimerAtivo] = useState(false);
+  
+  // ========== NOVO: Estado para Tooltip ==========
+  const [tooltipInfo, setTooltipInfo] = useState(null);
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   
   // Obter datas
   const hoje = new Date().toISOString().split('T')[0];
@@ -107,7 +110,40 @@ export default function DentistaDashboard() {
     setLoading(false);
   }, [agendamentos, user]);
 
-  // Calcular prioridade (baseado no horário)
+  // ========== NOVO: Funções para Tooltip ==========
+  const handleMouseEnter = (event, agendamento) => {
+    // Buscar informações completas do paciente
+    const pacienteInfo = pacientes.find(p => 
+      p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome
+    );
+    
+    if (pacienteInfo) {
+      // Buscar último atendimento do paciente
+      const ultimoAtendimento = agendamentos
+        .filter(ag => ag.paciente_id === pacienteInfo.id || ag.paciente_nome === pacienteInfo.nome)
+        .sort((a, b) => new Date(b.data) - new Date(a.data))[0];
+      
+      setTooltipInfo({
+        ...pacienteInfo,
+        ultimoAtendimento: ultimoAtendimento?.data || 'Nenhum'
+      });
+      setTooltipVisible(true);
+      
+      // Posicionar o tooltip próximo ao mouse
+      const rect = event.currentTarget.getBoundingClientRect();
+      setTooltipPosition({
+        x: rect.left + rect.width / 2,
+        y: rect.top - 10
+      });
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setTooltipVisible(false);
+    setTooltipInfo(null);
+  };
+
+  // Calcular prioridade
   const calcularPrioridade = (horario) => {
     const agora = new Date();
     const horaAtual = agora.getHours();
@@ -120,18 +156,6 @@ export default function DentistaDashboard() {
     if (diffMinutos < 15) return { nivel: 'alta', cor: 'bg-orange-100 border-orange-500', texto: 'Em breve', icone: '⚠️' };
     if (diffMinutos < 60) return { nivel: 'media', cor: 'bg-yellow-100 border-yellow-400', texto: 'Próximo', icone: '⏰' };
     return { nivel: 'normal', cor: 'bg-white', texto: 'Agendado', icone: '📅' };
-  };
-
-  // Buscar histórico rápido do paciente
-  const buscarHistoricoRapido = (pacienteId, pacienteNome) => {
-    const historicoKey = `prontuario_${pacienteId || pacienteNome}`;
-    const saved = localStorage.getItem(historicoKey);
-    if (saved) {
-      const historico = JSON.parse(saved);
-      setHistoricoRapido(historico.slice(0, 3)); // últimos 3 registros
-    } else {
-      setHistoricoRapido([]);
-    }
   };
 
   const handleLogout = () => {
@@ -162,6 +186,14 @@ export default function DentistaDashboard() {
     
     atualizarAgendamento({ ...agendamento, status: 'em_andamento' });
     showToast(`Atendimento de ${agendamento.paciente_nome} iniciado!`, 'success');
+  };
+
+  const visualizarAgendamento = (agendamento) => {
+    const pacienteCompleto = pacientes.find(p => p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome);
+    setModalVisualizacao({
+      ...agendamento,
+      paciente: pacienteCompleto || { nome: agendamento.paciente_nome }
+    });
   };
 
   const pausarAtendimento = () => {
@@ -263,39 +295,22 @@ export default function DentistaDashboard() {
     return data.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' });
   };
 
-  // Componente KanbanCard com melhorias
+  // ========== NOVO: Componente KanbanCard com Tooltip ==========
   const KanbanCard = ({ agendamento, onClick, onVisualizar, disabled, isVisualizacaoOnly = false }) => {
     const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === agendamento.id);
     const isActive = atendimentoAtivo?.id === agendamento.id;
     const prioridade = calcularPrioridade(agendamento.horario);
-    const [showTooltip, setShowTooltip] = useState(false);
-    
-    const handleMouseEnter = () => {
-      const pacienteInfo = pacientes.find(p => p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome);
-      setTooltipInfo(pacienteInfo);
-      setShowTooltip(true);
-    };
-    
-    const handleMouseLeave = () => {
-      setShowTooltip(false);
-      setTooltipInfo(null);
-    };
-    
-    const handleHistoricoClick = (e) => {
-      e.stopPropagation();
-      buscarHistoricoRapido(agendamento.paciente_id, agendamento.paciente_nome);
-    };
     
     return (
       <div className="relative">
         <div 
           onClick={() => !disabled && !isVisualizacaoOnly && onClick(agendamento)}
-          onMouseEnter={handleMouseEnter}
+          onMouseEnter={(e) => handleMouseEnter(e, agendamento)}
           onMouseLeave={handleMouseLeave}
-          className={`rounded-xl border p-3 mb-2 transition-all hover:shadow-md
+          className={`rounded-xl border p-3 mb-2 transition-all hover:shadow-md cursor-pointer
             ${isActive ? 'ring-2 ring-blue-500 bg-blue-50' : ''}
             ${estaPausado ? 'border-orange-300 bg-orange-50' : ''}
-            ${isVisualizacaoOnly ? 'cursor-pointer' : disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-[1.01]'}
+            ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.01]'}
           `}
           style={{
             borderLeft: `4px solid ${prioridade.nivel === 'urgente' ? '#ef4444' : prioridade.nivel === 'alta' ? '#f97316' : prioridade.nivel === 'media' ? '#eab308' : '#3b82f6'}`
@@ -331,14 +346,6 @@ export default function DentistaDashboard() {
               }`}>
                 {isActive ? 'Em andamento' : estaPausado ? 'Pausado' : prioridade.texto}
               </span>
-              {!isVisualizacaoOnly && !isActive && !estaPausado && (
-                <button
-                  onClick={handleHistoricoClick}
-                  className="block mt-1 text-[10px] text-blue-500 hover:text-blue-700 flex items-center justify-end gap-1 w-full"
-                >
-                  <History size={10} /> Histórico
-                </button>
-              )}
               {isVisualizacaoOnly && (
                 <button
                   onClick={() => onVisualizar(agendamento)}
@@ -350,25 +357,6 @@ export default function DentistaDashboard() {
             </div>
           </div>
         </div>
-        
-        {/* Tooltip com informações do paciente */}
-        {showTooltip && tooltipInfo && (
-          <div className="absolute z-50 bottom-full left-0 mb-2 w-64 bg-gray-900 text-white rounded-lg shadow-xl p-3 text-sm animate-in fade-in zoom-in duration-200">
-            <div className="flex items-center gap-2 mb-2">
-              <User size={14} />
-              <span className="font-semibold">{tooltipInfo.nome}</span>
-            </div>
-            {tooltipInfo.telefone && (
-              <div className="text-xs text-gray-300 mb-1">📞 {tooltipInfo.telefone}</div>
-            )}
-            {tooltipInfo.convenio && (
-              <div className="text-xs text-gray-300">🏥 {tooltipInfo.convenio}</div>
-            )}
-            <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
-              Último atendimento: {new Date(agendamento.created_at || Date.now()).toLocaleDateString()}
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -405,21 +393,18 @@ export default function DentistaDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              {/* Timer do atendimento ativo */}
               {atendimentoAtivo && (
                 <div className="flex items-center gap-2 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
                   <Timer size={14} className="animate-pulse" />
                   <span>{formatarTempo(tempoAtendimento)} - {atendimentoAtivo.paciente_nome}</span>
                 </div>
               )}
-              
               <button 
                 onClick={() => setTemaEscuro(!temaEscuro)}
                 className="p-2 rounded-lg hover:bg-gray-100 transition"
               >
                 {temaEscuro ? <Sun size={18} /> : <Moon size={18} />}
               </button>
-              
               <button onClick={handleLogout} className="flex items-center gap-2 px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg transition text-sm">
                 <LogOut size={16} /> Sair
               </button>
@@ -434,7 +419,7 @@ export default function DentistaDashboard() {
         onRetomar={retomarAtendimento} 
       />
 
-      {/* Barra de Busca e Resumo */}
+      {/* Barra de Busca */}
       <div className="max-w-7xl mx-auto px-4 py-4">
         <div className="relative">
           <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
@@ -470,10 +455,7 @@ export default function DentistaDashboard() {
                     key={ag.id} 
                     agendamento={ag} 
                     onClick={() => {}} 
-                    onVisualizar={() => {
-                      const pacienteInfo = pacientes.find(p => p.id === ag.paciente_id || p.nome === ag.paciente_nome);
-                      setModalVisualizacao({ ...ag, paciente: pacienteInfo });
-                    }}
+                    onVisualizar={visualizarAgendamento}
                     isVisualizacaoOnly={true}
                     disabled={false}
                   />
@@ -532,10 +514,7 @@ export default function DentistaDashboard() {
                     key={ag.id} 
                     agendamento={ag} 
                     onClick={() => {}} 
-                    onVisualizar={() => {
-                      const pacienteInfo = pacientes.find(p => p.id === ag.paciente_id || p.nome === ag.paciente_nome);
-                      setModalVisualizacao({ ...ag, paciente: pacienteInfo });
-                    }}
+                    onVisualizar={visualizarAgendamento}
                     isVisualizacaoOnly={true}
                   />
                 ))
@@ -545,41 +524,40 @@ export default function DentistaDashboard() {
         </div>
       </div>
 
-      {/* Modal Histórico Rápido */}
-      {historicoRapido && (
-        <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-blue-50 to-white">
-              <div className="flex items-center gap-2">
-                <History size={20} className="text-blue-600" />
-                <h2 className="font-bold">Histórico Rápido</h2>
-              </div>
-              <button onClick={() => setHistoricoRapido(null)} className="text-gray-400 hover:text-gray-600">
-                <XCircle size={24} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              {historicoRapido.length === 0 ? (
-                <div className="text-center py-8 text-gray-400">Nenhum histórico encontrado</div>
-              ) : (
-                historicoRapido.map((reg, idx) => (
-                  <div key={idx} className="border-l-4 border-blue-500 pl-3 py-2 mb-3 bg-gray-50 rounded-r-lg">
-                    <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
-                      <ClockIcon size={10} />
-                      <span>{reg.data}</span>
-                      <span className={`px-1.5 py-0.5 rounded text-xs ${reg.tipo === 'sistema' ? 'bg-blue-100' : 'bg-gray-200'}`}>
-                        {reg.tipo === 'sistema' ? 'Sistema' : 'Manual'}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-700">{reg.descricao.substring(0, 100)}...</p>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="p-4 border-t bg-gray-50">
-              <button onClick={() => setHistoricoRapido(null)} className="w-full bg-gray-600 text-white py-2 rounded-lg">Fechar</button>
-            </div>
+      {/* ========== TOOLTIP (Pré-visualização Rápida) ========== */}
+      {tooltipVisible && tooltipInfo && (
+        <div 
+          className="fixed z-[100] bg-gray-900 text-white rounded-lg shadow-xl p-3 text-sm animate-in fade-in zoom-in duration-200"
+          style={{
+            left: `${tooltipPosition.x - 150}px`,
+            top: `${tooltipPosition.y - 80}px`,
+            minWidth: '250px'
+          }}
+        >
+          <div className="flex items-center gap-2 mb-2 border-b border-gray-700 pb-2">
+            <User size={14} className="text-blue-400" />
+            <span className="font-semibold">{tooltipInfo.nome}</span>
           </div>
+          {tooltipInfo.telefone && (
+            <div className="text-xs text-gray-300 mb-1 flex items-center gap-2">
+              <span>📞</span> {tooltipInfo.telefone}
+            </div>
+          )}
+          {tooltipInfo.email && (
+            <div className="text-xs text-gray-300 mb-1 flex items-center gap-2">
+              <span>✉️</span> {tooltipInfo.email}
+            </div>
+          )}
+          {tooltipInfo.convenio && (
+            <div className="text-xs text-gray-300 mb-2 flex items-center gap-2">
+              <span>🏥</span> {tooltipInfo.convenio}
+            </div>
+          )}
+          <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400 flex items-center gap-2">
+            <ClockIcon size={10} />
+            <span>Último atendimento: {tooltipInfo.ultimoAtendimento || 'Nenhum'}</span>
+          </div>
+          <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-3 h-3 bg-gray-900 rotate-45"></div>
         </div>
       )}
 
