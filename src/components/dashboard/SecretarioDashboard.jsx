@@ -509,6 +509,7 @@ export default function SecretarioDashboard() {
             key={forceUpdate}
             agendamentos={agendamentos}
             dentistas={dentistas}
+            procedimentos={procedimentos}
             salas={salas}
             visualizacao={visualizacao}
             onAgendamentoClick={handleAgendamentoClick}
