@@ -41,6 +41,7 @@ export default function SecretarioDashboard() {
   const [mostrarFiltros, setMostrarFiltros] = useState(false);
   const [notificacoes, setNotificacoes] = useState([]);
   const [mostrarNotificacoes, setMostrarNotificacoes] = useState(false);
+  const [forceUpdate, setForceUpdate] = useState(0);
   
   // Estado para cadastro rápido
   const [quickPaciente, setQuickPaciente] = useState({
@@ -60,16 +61,46 @@ export default function SecretarioDashboard() {
     sala: '01'
   });
 
-  // Verificar notificações de retorno pendente
+  // CORREÇÃO 1: Verificar notificações de retorno pendente com atualização automática
   useEffect(() => {
     const retornosPendentes = agendamentos.filter(ag => 
       ag.status === 'retorno_pendente' && !ag.notificacao_vista
     );
-    if (retornosPendentes.length > 0 && notificacoes.length === 0) {
-      setNotificacoes(retornosPendentes);
-      showToast(`${retornosPendentes.length} retorno(s) pendente(s) aguardando reagendamento!`, 'info');
+    
+    // Verificar se há novos retornos que não estão nas notificações atuais
+    const novosRetornos = retornosPendentes.filter(
+      ret => !notificacoes.some(n => n.id === ret.id)
+    );
+    
+    if (novosRetornos.length > 0) {
+      setNotificacoes(prev => [...novosRetornos, ...prev]);
+      showToast(`${novosRetornos.length} novo(s) retorno(s) pendente(s)!`, 'info');
     }
   }, [agendamentos]);
+
+  // CORREÇÃO 2: Sincronização entre abas
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'agendamentos') {
+        setForceUpdate(prev => prev + 1);
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // CORREÇÃO 3: Fechar modal com ESC
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') {
+        setShowQuickPaciente(false);
+        setShowQuickAgendamento(false);
+        setMostrarNotificacoes(false);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, []);
 
   // Filtro de pacientes
   const pacientesFiltrados = pacientes.filter(p => 
@@ -88,15 +119,14 @@ export default function SecretarioDashboard() {
         e.preventDefault();
         setShowQuickPaciente(true);
       }
-      if (e.key === 'Escape') {
-        setShowQuickPaciente(false);
-        setShowQuickAgendamento(false);
-        setMostrarNotificacoes(false);
+      if (e.ctrlKey && e.key === 'f') {
+        e.preventDefault();
+        setMostrarFiltros(!mostrarFiltros);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [mostrarFiltros]);
 
   const handleLogout = () => {
     logout();
@@ -111,6 +141,7 @@ export default function SecretarioDashboard() {
       atualizarAgendamento({ ...agToUpdate, notificacao_vista: true });
     }
     setNotificacoes(notificacoes.filter(n => n.id !== id));
+    showToast('Abra o formulário para reagendar o retorno', 'info');
   };
 
   // Cadastro rápido de paciente
@@ -189,12 +220,22 @@ export default function SecretarioDashboard() {
   const handleAgendamentoMove = (agendamentoAtualizado) => {
     atualizarAgendamento(agendamentoAtualizado);
     showToast(`Agendamento remarcado com sucesso!`, 'success');
+    // Forçar atualização da UI
+    setForceUpdate(prev => prev + 1);
   };
 
   // Função para editar agendamento
   const handleAgendamentoClick = (agendamento) => {
     console.log('Agendamento selecionado:', agendamento);
-    showToast(`Clique para editar: ${agendamento.paciente_nome}`, 'info');
+    setQuickAgendamento({
+      paciente_id: agendamento.paciente_id,
+      procedimento_id: agendamento.procedimento_id,
+      dentista_id: agendamento.dentista_id,
+      data: agendamento.data,
+      horario: agendamento.horario,
+      sala: agendamento.sala
+    });
+    setShowQuickAgendamento(true);
   };
 
   // Limpar filtros
@@ -202,6 +243,7 @@ export default function SecretarioDashboard() {
     setSalaSelecionada('todas');
     setDentistaSelecionado('todos');
     setSearchTerm('');
+    showToast('Filtros limpos!', 'success');
   };
 
   // Próximos atendimentos
@@ -210,7 +252,7 @@ export default function SecretarioDashboard() {
   const hojeStr = new Date().toISOString().split('T')[0];
   const proximosAtendimentos = agendamentos
     .filter(ag => {
-      if (!ag.horario || ag.status === 'cancelado') return false;
+      if (!ag.horario || ag.status === 'cancelado' || ag.status === 'concluido') return false;
       const horaAg = parseInt(ag.horario.split(':')[0]);
       return ag.data === hojeStr && horaAg >= horaAtualNum && horaAg <= horaAtualNum + 4;
     })
@@ -219,9 +261,9 @@ export default function SecretarioDashboard() {
   const stats = {
     totalPacientes: pacientes.length,
     totalAgendamentos: agendamentos.length,
-    agendamentosHoje: agendamentos.filter(ag => ag.data === hojeStr).length,
+    agendamentosHoje: agendamentos.filter(ag => ag.data === hojeStr && ag.status !== 'cancelado').length,
     atrasados: agendamentos.filter(ag => {
-      if (!ag.horario || ag.status === 'cancelado') return false;
+      if (!ag.horario || ag.status === 'cancelado' || ag.status === 'concluido') return false;
       const horaAg = parseInt(ag.horario.split(':')[0]);
       return ag.data === hojeStr && horaAg < horaAtualNum;
     }).length
@@ -247,38 +289,43 @@ export default function SecretarioDashboard() {
             </div>
             
             <div className="flex items-center gap-2">
-              {/* Botão Notificações */}
+              {/* Botão Notificações com badge */}
               <div className="relative">
                 <button
                   onClick={() => setMostrarNotificacoes(!mostrarNotificacoes)}
                   className="p-2 rounded-full hover:bg-gray-100 transition relative"
+                  title="Notificações de retorno"
                 >
                   <Bell size={18} />
                   {notificacoes.length > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center animate-pulse">
                       {notificacoes.length}
                     </span>
                   )}
                 </button>
                 
                 {mostrarNotificacoes && notificacoes.length > 0 && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border z-50 overflow-hidden">
+                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border z-50 overflow-hidden animate-in slide-in-from-top-2 duration-200">
                     <div className="p-3 border-b bg-orange-50">
-                      <h4 className="font-semibold text-sm">Retornos Pendentes</h4>
+                      <h4 className="font-semibold text-sm">🔄 Retornos Pendentes</h4>
+                      <p className="text-[10px] text-gray-500">Clique em um retorno para agendar</p>
                     </div>
                     <div className="max-h-64 overflow-y-auto">
                       {notificacoes.map(notif => (
-                        <div key={notif.id} className="p-3 border-b hover:bg-gray-50">
+                        <div key={notif.id} className="p-3 border-b hover:bg-gray-50 transition cursor-pointer" onClick={() => marcarNotificacaoComoLida(notif.id)}>
                           <p className="text-sm font-medium">{notif.paciente_nome}</p>
                           <p className="text-xs text-gray-500">{notif.procedimento_nome}</p>
-                          <button 
-                            onClick={() => marcarNotificacaoComoLida(notif.id)}
-                            className="text-xs text-blue-600 mt-1"
-                          >
+                          {notif.observacao_dentista && (
+                            <p className="text-[10px] text-gray-400 italic mt-1">"{notif.observacao_dentista}"</p>
+                          )}
+                          <button className="text-xs text-blue-600 mt-1 hover:underline">
                             Agendar retorno →
                           </button>
                         </div>
                       ))}
+                    </div>
+                    <div className="p-2 border-t bg-gray-50 text-center">
+                      <button onClick={() => setMostrarNotificacoes(false)} className="text-[10px] text-gray-400">Fechar</button>
                     </div>
                   </div>
                 )}
@@ -287,6 +334,7 @@ export default function SecretarioDashboard() {
               <button
                 onClick={() => setMostrarFiltros(!mostrarFiltros)}
                 className={`p-2 rounded-full transition ${mostrarFiltros ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100'}`}
+                title="Filtros (Ctrl+F)"
               >
                 <Filter size={18} />
               </button>
@@ -310,6 +358,7 @@ export default function SecretarioDashboard() {
               <button
                 onClick={handleLogout}
                 className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition"
+                title="Sair"
               >
                 <LogOut size={18} />
               </button>
@@ -320,13 +369,13 @@ export default function SecretarioDashboard() {
 
       {/* Barra de Filtros (colapsável) */}
       {mostrarFiltros && (
-        <div className="bg-white border-b shadow-sm sticky top-[57px] z-20">
+        <div className="bg-white border-b shadow-sm sticky top-[57px] z-20 animate-in slide-in-from-top-2 duration-200">
           <div className="max-w-7xl mx-auto px-4 py-2 flex flex-wrap items-center gap-3">
             <span className="text-xs font-medium text-gray-500">Filtros:</span>
             <select
               value={salaSelecionada}
               onChange={(e) => setSalaSelecionada(e.target.value)}
-              className="px-2 py-1 text-xs border rounded-lg"
+              className="px-2 py-1 text-xs border rounded-lg focus:ring-2 focus:ring-blue-500"
             >
               <option value="todas">Todas salas</option>
               {['01', '02', '03'].map(s => <option key={s} value={s}>Sala {s}</option>)}
@@ -335,7 +384,7 @@ export default function SecretarioDashboard() {
             <select
               value={dentistaSelecionado}
               onChange={(e) => setDentistaSelecionado(e.target.value)}
-              className="px-2 py-1 text-xs border rounded-lg"
+              className="px-2 py-1 text-xs border rounded-lg focus:ring-2 focus:ring-blue-500"
             >
               <option value="todos">Todos dentistas</option>
               {dentistas.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>)}
@@ -376,6 +425,10 @@ export default function SecretarioDashboard() {
       {/* Próximos atendimentos - carrossel simplificado */}
       {proximosAtendimentos.length > 0 && (
         <div className="max-w-7xl mx-auto px-4 pb-2">
+          <div className="flex items-center gap-2 mb-1">
+            <Clock size={12} className="text-gray-400" />
+            <span className="text-[10px] text-gray-500">Próximos atendimentos</span>
+          </div>
           <div className="flex gap-2 overflow-x-auto pb-1">
             {proximosAtendimentos.map(ag => (
               <div key={ag.id} className="flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-1.5 min-w-[180px] border border-blue-100">
@@ -384,8 +437,17 @@ export default function SecretarioDashboard() {
                 </div>
                 <div className="flex-1">
                   <p className="text-xs font-medium truncate">{ag.paciente_nome}</p>
-                  <p className="text-[10px] text-gray-500">{ag.horario}</p>
+                  <div className="flex gap-2">
+                    <p className="text-[10px] text-gray-500">{ag.horario}</p>
+                    <p className="text-[10px] text-gray-400">Sala {ag.sala}</p>
+                  </div>
                 </div>
+                <button
+                  onClick={() => handleAgendamentoClick(ag)}
+                  className="text-[10px] text-blue-600 hover:underline"
+                >
+                  Editar
+                </button>
               </div>
             ))}
           </div>
@@ -398,11 +460,16 @@ export default function SecretarioDashboard() {
           <Search className="absolute left-3 top-2 text-gray-400" size={14} />
           <input
             type="text"
-            placeholder="Buscar paciente..."
+            placeholder="Buscar paciente por nome ou telefone..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
           />
+          {searchTerm && (
+            <button onClick={() => setSearchTerm('')} className="absolute right-3 top-2 text-gray-400 hover:text-gray-600">
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -427,7 +494,7 @@ export default function SecretarioDashboard() {
               </div>
               <button
                 onClick={() => window.location.reload()}
-                className="p-1 text-gray-400 hover:text-gray-600"
+                className="p-1 text-gray-400 hover:text-gray-600 transition"
                 title="Atualizar"
               >
                 <RefreshCw size={14} />
@@ -439,6 +506,7 @@ export default function SecretarioDashboard() {
           </div>
           
           <CalendarioInterativo
+            key={forceUpdate}
             agendamentos={agendamentos}
             dentistas={dentistas}
             salas={salas}
@@ -453,7 +521,7 @@ export default function SecretarioDashboard() {
       {searchTerm && pacientesFiltrados.length > 0 && (
         <div className="fixed bottom-4 right-4 w-80 bg-white rounded-xl shadow-2xl border z-40 overflow-hidden animate-in slide-in-from-right-5 duration-200">
           <div className="p-2 bg-blue-50 border-b flex justify-between items-center">
-            <span className="text-xs font-medium">Pacientes encontrados</span>
+            <span className="text-xs font-medium">📋 Pacientes encontrados ({pacientesFiltrados.length})</span>
             <button onClick={() => setSearchTerm('')} className="text-gray-400 hover:text-gray-600">
               <X size={14} />
             </button>
@@ -468,23 +536,28 @@ export default function SecretarioDashboard() {
                   setQuickAgendamento({ ...quickAgendamento, paciente_id: paciente.id });
                   setSearchTerm('');
                 }}
-                className="p-2 hover:bg-blue-50 cursor-pointer flex justify-between items-center border-b last:border-0"
+                className="p-2 hover:bg-blue-50 cursor-pointer flex justify-between items-center border-b last:border-0 transition"
               >
                 <div>
                   <p className="text-sm font-medium">{paciente.nome}</p>
                   <p className="text-[10px] text-gray-500">{paciente.telefone || 'Sem telefone'}</p>
                 </div>
-                <button className="text-blue-600 text-xs">Agendar</button>
+                <button className="text-blue-600 text-xs font-medium">Agendar →</button>
               </div>
             ))}
+            {pacientesFiltrados.length > 5 && (
+              <div className="p-2 text-center text-[10px] text-gray-400 border-t">
+                + {pacientesFiltrados.length - 5} outros pacientes
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* Modal de Cadastro Rápido de Paciente */}
       {showQuickPaciente && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="p-4 border-b bg-gradient-to-r from-green-50 to-white">
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
@@ -495,6 +568,7 @@ export default function SecretarioDashboard() {
                   <X size={20} />
                 </button>
               </div>
+              <p className="text-[10px] text-gray-500 mt-1">Apenas campos essenciais</p>
             </div>
             
             <div className="p-4 space-y-3">
@@ -559,8 +633,8 @@ export default function SecretarioDashboard() {
 
       {/* Modal de Agendamento Rápido */}
       {showQuickAgendamento && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto animate-in zoom-in-95 duration-200">
             <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-white sticky top-0 bg-white">
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
@@ -571,6 +645,7 @@ export default function SecretarioDashboard() {
                   <X size={20} />
                 </button>
               </div>
+              <p className="text-[10px] text-gray-500 mt-1">Preencha os dados da consulta</p>
             </div>
             
             <div className="p-4 space-y-3">
@@ -597,10 +672,16 @@ export default function SecretarioDashboard() {
                       setShowQuickPaciente(true);
                     }}
                     className="px-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition text-sm"
+                    title="Novo paciente"
                   >
                     <UserPlus size={16} />
                   </button>
                 </div>
+                {pacienteSelecionado && (
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    📞 {pacienteSelecionado.telefone || 'Sem telefone'} • 🏥 {pacienteSelecionado.convenio || 'Particular'}
+                  </p>
+                )}
               </div>
               
               <div className="grid grid-cols-2 gap-3">
