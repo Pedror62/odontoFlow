@@ -42,7 +42,7 @@ export default function DentistaDashboard() {
   const [tempoAtendimento, setTempoAtendimento] = useState(0);
   const [timerAtivo, setTimerAtivo] = useState(false);
   
-  // ========== NOVO: Estado para Tooltip ==========
+  // Tooltip
   const [tooltipInfo, setTooltipInfo] = useState(null);
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
@@ -110,15 +110,13 @@ export default function DentistaDashboard() {
     setLoading(false);
   }, [agendamentos, user]);
 
-  // ========== NOVO: Funções para Tooltip ==========
+  // Tooltip functions
   const handleMouseEnter = (event, agendamento) => {
-    // Buscar informações completas do paciente
     const pacienteInfo = pacientes.find(p => 
       p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome
     );
     
     if (pacienteInfo) {
-      // Buscar último atendimento do paciente
       const ultimoAtendimento = agendamentos
         .filter(ag => ag.paciente_id === pacienteInfo.id || ag.paciente_nome === pacienteInfo.nome)
         .sort((a, b) => new Date(b.data) - new Date(a.data))[0];
@@ -129,7 +127,6 @@ export default function DentistaDashboard() {
       });
       setTooltipVisible(true);
       
-      // Posicionar o tooltip próximo ao mouse
       const rect = event.currentTarget.getBoundingClientRect();
       setTooltipPosition({
         x: rect.left + rect.width / 2,
@@ -143,7 +140,6 @@ export default function DentistaDashboard() {
     setTooltipInfo(null);
   };
 
-  // Calcular prioridade
   const calcularPrioridade = (horario) => {
     const agora = new Date();
     const horaAtual = agora.getHours();
@@ -176,6 +172,11 @@ export default function DentistaDashboard() {
       return;
     }
     
+    if (agendamento.status === 'concluido') {
+      showToast('Este atendimento já foi concluído!', 'info');
+      return;
+    }
+    
     const pacienteCompleto = pacientes.find(p => p.id === agendamento.paciente_id || p.nome === agendamento.paciente_nome);
     
     setAtendimentoAtivo({
@@ -197,7 +198,10 @@ export default function DentistaDashboard() {
   };
 
   const pausarAtendimento = () => {
-    if (!atendimentoAtivo) return;
+    if (!atendimentoAtivo) {
+      showToast('Nenhum atendimento ativo para pausar', 'error');
+      return;
+    }
     
     const novoPausado = {
       id: Date.now(),
@@ -214,7 +218,7 @@ export default function DentistaDashboard() {
     pausarAtendimentoGlobal(novoPausado);
     atualizarAgendamento({ ...atendimentoAtivo, status: 'pausado' });
     setAtendimentoAtivo(null);
-    showToast(`Atendimento de ${novoPausado.paciente} pausado!`, 'info');
+    showToast(`Atendimento de ${novoPausado.paciente} pausado! Clique no card amarelo para retomar.`, 'info');
   };
 
   const retomarAtendimento = (pausado) => {
@@ -257,7 +261,7 @@ export default function DentistaDashboard() {
     };
     
     adicionarAgendamento(novoRetorno);
-    showToast(`Retorno solicitado para ${retorno.data} às ${retorno.horario}!`, 'success');
+    showToast(`Retorno solicitado para ${retorno.data} às ${retorno.horario}! Secretária notificada.`, 'success');
   };
 
   const finalizarAtendimento = async () => {
@@ -287,7 +291,7 @@ export default function DentistaDashboard() {
     
     atualizarAgendamento({ ...atendimentoAtivo, status: 'concluido' });
     setAtendimentoAtivo(null);
-    showToast(`Atendimento finalizado!`, 'success');
+    showToast(`Atendimento finalizado! Materiais consumidos: R$ ${resultado.consumo?.reduce((s, i) => s + i.custo, 0).toFixed(2)}`, 'success');
   };
 
   const formatarDataLegivel = (dataStr) => {
@@ -295,7 +299,7 @@ export default function DentistaDashboard() {
     return data.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' });
   };
 
-  // ========== NOVO: Componente KanbanCard com Tooltip ==========
+  // KanbanCard Component
   const KanbanCard = ({ agendamento, onClick, onVisualizar, disabled, isVisualizacaoOnly = false }) => {
     const estaPausado = atendimentosPausados?.some(p => p.atendimento_id === agendamento.id);
     const isActive = atendimentoAtivo?.id === agendamento.id;
@@ -524,7 +528,7 @@ export default function DentistaDashboard() {
         </div>
       </div>
 
-      {/* ========== TOOLTIP (Pré-visualização Rápida) ========== */}
+      {/* Tooltip (Pré-visualização Rápida) */}
       {tooltipVisible && tooltipInfo && (
         <div 
           className="fixed z-[100] bg-gray-900 text-white rounded-lg shadow-xl p-3 text-sm animate-in fade-in zoom-in duration-200"
@@ -554,7 +558,7 @@ export default function DentistaDashboard() {
             </div>
           )}
           <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400 flex items-center gap-2">
-            <ClockIcon size={10} />
+            <Clock size={10} />
             <span>Último atendimento: {tooltipInfo.ultimoAtendimento || 'Nenhum'}</span>
           </div>
           <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-3 h-3 bg-gray-900 rotate-45"></div>
