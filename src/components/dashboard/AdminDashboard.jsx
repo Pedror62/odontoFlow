@@ -41,7 +41,8 @@ export default function AdminDashboard() {
     atualizarPlano,
     deletarPlano,
     agendamentos,
-    pacientes
+    pacientes,
+    dentistas 
   } = useData();
   
   // Usando dados do contexto de materiais
