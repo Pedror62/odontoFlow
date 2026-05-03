@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Clock, Stethoscope, User, Activity, CheckCircle, XCircle, 
   AlertCircle, Calendar, ChevronLeft, ChevronRight, 
-  Filter, Download, Printer, Eye, Edit, Trash2, 
-  MoreVertical, MapPin, Phone, Mail, DollarSign,
-  Plus, Minus, ZoomIn, ZoomOut, RefreshCw, X, AlertTriangle
+  Edit, Trash2, MapPin, DollarSign,
+  ZoomIn, ZoomOut, RefreshCw, X, AlertTriangle
 } from 'lucide-react';
 import { showToast } from '../Toast';
 
@@ -18,84 +17,69 @@ const STATUS_CONFIG = {
   pausado: { bg: 'bg-orange-50', border: 'border-orange-500', text: 'text-orange-700', icon: '⏸', label: 'Pausado' }
 };
 
-// Cores das salas
-const SALA_COLORS = {
-  '01': { bg: 'bg-indigo-100', text: 'text-indigo-700', border: 'border-indigo-300' },
-  '02': { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-300' },
-  '03': { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300' }
+// Mapeamento de duração dos procedimentos (minutos)
+const DURACAO_POR_PROCEDIMENTO = {
+  'Limpeza': 30,
+  'Canal': 90,
+  'Extração': 45,
+  'Restauração': 30,
+  'Clareamento': 60,
+  'default': 30
 };
 
-// Gerar horários base (08:00 às 20:00)
-const HORARIOS_BASE = [];
+// Gerar todos os horários disponíveis (08:00 às 20:00, intervalos de 30 min)
+const TODOS_HORARIOS = [];
 for (let i = 8; i <= 20; i++) {
-  HORARIOS_BASE.push(`${i.toString().padStart(2, '0')}:00`);
-  HORARIOS_BASE.push(`${i.toString().padStart(2, '0')}:30`);
+  TODOS_HORARIOS.push(`${i.toString().padStart(2, '0')}:00`);
+  TODOS_HORARIOS.push(`${i.toString().padStart(2, '0')}:30`);
 }
 
-// Função para calcular horários disponíveis baseado na duração do procedimento
-const calcularHorariosDisponiveis = (procedimentoDuracao, horarioInicioDisponivel = '08:00') => {
-  const horarios = [];
-  const duracaoMinutos = procedimentoDuracao || 30;
-  const blocosPorHora = 60 / duracaoMinutos;
-  
-  for (let i = 8; i <= 20; i++) {
-    for (let j = 0; j < blocosPorHora; j++) {
-      const minutos = j * duracaoMinutos;
-      if (minutos < 60) {
-        const horario = `${i.toString().padStart(2, '0')}:${minutos.toString().padStart(2, '0')}`;
-        if (horario >= horarioInicioDisponivel) {
-          horarios.push(horario);
-        }
-      }
-    }
-  }
-  return horarios;
-};
-
-// Função para verificar conflito de horário considerando a duração
-const verificarConflitoHorario = (agendamentosExistentes, novaData, novoSala, novoHorario, duracaoMinutos, idIgnorar = null) => {
-  const novoInicio = converterHorarioParaMinutos(novoHorario);
-  const novoFim = novoInicio + duracaoMinutos;
-  
-  for (const ag of agendamentosExistentes) {
-    if (ag.id === idIgnorar) continue;
-    if (ag.data !== novaData) continue;
-    if (ag.sala !== novoSala) continue;
-    if (ag.status === 'cancelado') continue;
-    
-    const agInicio = converterHorarioParaMinutos(ag.horario);
-    const agDuracao = ag.duracao_procedimento || 30;
-    const agFim = agInicio + agDuracao;
-    
-    // Verifica sobreposição
-    if (novoInicio < agFim && novoFim > agInicio) {
-      return {
-        conflito: true,
-        com: ag,
-        mensagem: `Conflito com ${ag.paciente_nome} das ${ag.horario} às ${formatarMinutosParaHorario(agFim)}`
-      };
-    }
-  }
-  
-  return { conflito: false };
-};
-
-// Funções auxiliares para conversão de horário
-const converterHorarioParaMinutos = (horario) => {
+// Converter horário para minutos
+const horarioParaMinutos = (horario) => {
   const [hora, minuto] = horario.split(':').map(Number);
   return hora * 60 + minuto;
 };
 
-const formatarMinutosParaHorario = (minutosTotais) => {
-  const hora = Math.floor(minutosTotais / 60);
-  const minuto = minutosTotais % 60;
+// Converter minutos para horário
+const minutosParaHorario = (minutos) => {
+  const hora = Math.floor(minutos / 60);
+  const minuto = minutos % 60;
   return `${hora.toString().padStart(2, '0')}:${minuto.toString().padStart(2, '0')}`;
 };
 
-// Obter duração do procedimento pelo nome
-const getDuracaoProcedimento = (procedimentoNome, procedimentos) => {
-  const proc = procedimentos?.find(p => p.nome === procedimentoNome);
-  return proc?.duracao || 30;
+// Calcular horário de fim baseado na duração
+const calcularHorarioFim = (horarioInicio, duracaoMinutos) => {
+  const minutosInicio = horarioParaMinutos(horarioInicio);
+  const minutosFim = minutosInicio + duracaoMinutos;
+  return minutosParaHorario(minutosFim);
+};
+
+// Verificar conflito de horário entre dois agendamentos
+const verificarConflito = (ag1, ag2) => {
+  if (ag1.sala !== ag2.sala) return false;
+  if (ag1.data !== ag2.data) return false;
+  if (ag1.status === 'cancelado' || ag2.status === 'cancelado') return false;
+  
+  const duracao1 = DURACAO_POR_PROCEDIMENTO[ag1.procedimento_nome] || 30;
+  const duracao2 = DURACAO_POR_PROCEDIMENTO[ag2.procedimento_nome] || 30;
+  
+  const inicio1 = horarioParaMinutos(ag1.horario);
+  const fim1 = inicio1 + duracao1;
+  const inicio2 = horarioParaMinutos(ag2.horario);
+  const fim2 = inicio2 + duracao2;
+  
+  return (inicio1 < fim2 && inicio2 < fim1);
+};
+
+// Verificar se um novo horário está disponível
+const isHorarioDisponivel = (agendamentosExistentes, novoAgendamento, idIgnorar = null) => {
+  for (const ag of agendamentosExistentes) {
+    if (ag.id === idIgnorar) continue;
+    if (verificarConflito(ag, novoAgendamento)) {
+      return { disponivel: false, conflitoCom: ag };
+    }
+  }
+  return { disponivel: true, conflitoCom: null };
 };
 
 export default function CalendarioInterativo({ 
@@ -107,8 +91,7 @@ export default function CalendarioInterativo({
   onAgendamentoClick,
   onAgendamentoMove,
   onAgendamentoEdit,
-  onAgendamentoDelete,
-  onStatusChange 
+  onAgendamentoDelete 
 }) {
   const [dataAtual, setDataAtual] = useState(new Date());
   const [zoom, setZoom] = useState(1);
@@ -118,17 +101,9 @@ export default function CalendarioInterativo({
   const [modoEdicao, setModoEdicao] = useState(false);
   const [agendamentoSelecionado, setAgendamentoSelecionado] = useState(null);
   const [showDetalhes, setShowDetalhes] = useState(false);
-  const [horariosDisponiveis, setHorariosDisponiveis] = useState(HORARIOS_BASE);
+  const [dragOverHorario, setDragOverHorario] = useState(null);
 
-  // Atualizar horários disponíveis baseado nos procedimentos
-  useEffect(() => {
-    if (agendamentoSelecionado) {
-      const duracao = getDuracaoProcedimento(agendamentoSelecionado.procedimento_nome, procedimentos);
-      setHorariosDisponiveis(calcularHorariosDisponiveis(duracao));
-    }
-  }, [agendamentoSelecionado, procedimentos]);
-
-  // Obter data de início da semana
+  // Obter dias da semana
   const getStartOfWeek = (date) => {
     const d = new Date(date);
     const day = d.getDay();
@@ -145,89 +120,133 @@ export default function CalendarioInterativo({
   });
 
   // Filtrar agendamentos
-  const getAgendamentosFiltrados = () => {
-    let filtrados = [...agendamentos];
+  const filtrarAgendamentos = (ag) => {
+    if (filtroDentista !== 'todos' && ag.dentista_nome !== filtroDentista) return false;
+    if (filtroStatus !== 'todos' && ag.status !== filtroStatus) return false;
+    if (filtroSala !== 'todas' && ag.sala !== filtroSala) return false;
+    return true;
+  };
+
+  const getAgendamentosPorDiaESala = (dia, sala) => {
+    const dataStr = dia.toISOString().split('T')[0];
+    return agendamentos.filter(ag => 
+      ag.data === dataStr && 
+      ag.sala === sala && 
+      filtrarAgendamentos(ag)
+    );
+  };
+
+  // Verificar se um horário está ocupado em uma sala específica
+  const isHorarioOcupado = (dia, sala, horario, idIgnorar = null) => {
+    const dataStr = dia.toISOString().split('T')[0];
+    const horarioMinutos = horarioParaMinutos(horario);
     
-    if (filtroDentista !== 'todos') {
-      filtrados = filtrados.filter(ag => ag.dentista_nome === filtroDentista);
+    for (const ag of agendamentos) {
+      if (ag.id === idIgnorar) continue;
+      if (ag.data !== dataStr) continue;
+      if (ag.sala !== sala) continue;
+      if (ag.status === 'cancelado') continue;
+      
+      const duracao = DURACAO_POR_PROCEDIMENTO[ag.procedimento_nome] || 30;
+      const inicio = horarioParaMinutos(ag.horario);
+      const fim = inicio + duracao;
+      
+      if (horarioMinutos >= inicio && horarioMinutos < fim) {
+        return true;
+      }
     }
-    if (filtroStatus !== 'todos') {
-      filtrados = filtrados.filter(ag => ag.status === filtroStatus);
-    }
-    if (filtroSala !== 'todas') {
-      filtrados = filtrados.filter(ag => ag.sala === filtroSala);
-    }
+    return false;
+  };
+
+  // Obter agendamento que ocupa um horário específico
+  const getAgendamentoNoHorario = (dia, sala, horario) => {
+    const dataStr = dia.toISOString().split('T')[0];
+    const horarioMinutos = horarioParaMinutos(horario);
     
-    return filtrados;
+    for (const ag of agendamentos) {
+      if (ag.data !== dataStr) continue;
+      if (ag.sala !== sala) continue;
+      if (ag.status === 'cancelado') continue;
+      
+      const duracao = DURACAO_POR_PROCEDIMENTO[ag.procedimento_nome] || 30;
+      const inicio = horarioParaMinutos(ag.horario);
+      const fim = inicio + duracao;
+      
+      if (horarioMinutos >= inicio && horarioMinutos < fim) {
+        return ag;
+      }
+    }
+    return null;
   };
 
-  const getAgendamentosPorDiaESala = (data, sala) => {
-    const dataStr = data.toISOString().split('T')[0];
-    const filtrados = getAgendamentosFiltrados();
-    return filtrados.filter(ag => ag.data === dataStr && ag.sala === sala);
+  // Calcular altura do card baseado na duração
+  const getCardHeight = (procedimentoNome) => {
+    const duracao = DURACAO_POR_PROCEDIMENTO[procedimentoNome] || 30;
+    // Altura base: 60px para 30 minutos, proporcional
+    return Math.min(120, (duracao / 30) * 60);
   };
 
-  const getAgendamentoNoHorario = (agendamentosDia, horario) => {
-    return agendamentosDia.find(ag => ag.horario === horario);
-  };
-
-  // Verificar se um horário está disponível para um procedimento específico
-  const isHorarioDisponivel = (data, sala, horario, procedimentoNome, idIgnorar = null) => {
-    const duracao = getDuracaoProcedimento(procedimentoNome, procedimentos);
-    const conflito = verificarConflitoHorario(agendamentos, data, sala, horario, duracao, idIgnorar);
-    return !conflito.conflito;
-  };
-
-  // Drag & Drop com validação de duração
+  // Drag & Drop com validação
   const handleDragStart = (agendamento, e) => {
-    if (!modoEdicao) return;
+    if (!modoEdicao) {
+      e.preventDefault();
+      showToast('Ative o modo edição para mover agendamentos', 'info');
+      return;
+    }
     e.dataTransfer.setData('text/plain', JSON.stringify(agendamento));
     e.target.style.opacity = '0.5';
   };
 
   const handleDragEnd = (e) => {
     e.target.style.opacity = '1';
+    setDragOverHorario(null);
   };
 
-  const handleDragOver = (e) => {
+  const handleDragOver = (e, dia, horario, sala) => {
     e.preventDefault();
+    setDragOverHorario({ dia, horario, sala });
   };
 
-  const handleDrop = async (data, horario, sala, e) => {
+  const handleDragLeave = () => {
+    setDragOverHorario(null);
+  };
+
+  const handleDrop = async (e, dia, horario, sala) => {
     e.preventDefault();
-    if (!modoEdicao) {
-      showToast('Ative o modo edição para mover agendamentos', 'info');
-      return;
-    }
+    setDragOverHorario(null);
+    
+    if (!modoEdicao) return;
     
     const agendamentoOriginal = JSON.parse(e.dataTransfer.getData('text/plain'));
-    const duracao = getDuracaoProcedimento(agendamentoOriginal.procedimento_nome, procedimentos);
+    const novaData = dia.toISOString().split('T')[0];
+    const duracao = DURACAO_POR_PROCEDIMENTO[agendamentoOriginal.procedimento_nome] || 30;
     
-    // Verificar conflito de horário
-    const conflito = verificarConflitoHorario(
-      agendamentos, 
-      data.toISOString().split('T')[0], 
-      sala, 
-      horario, 
-      duracao,
-      agendamentoOriginal.id
-    );
+    // Verificar conflito
+    const novoAgendamento = {
+      ...agendamentoOriginal,
+      data: novaData,
+      horario: horario,
+      sala: sala,
+      procedimento_nome: agendamentoOriginal.procedimento_nome
+    };
     
-    if (conflito.conflito) {
-      showToast(`⚠️ ${conflito.mensagem}`, 'error');
+    const { disponivel, conflitoCom } = isHorarioDisponivel(agendamentos, novoAgendamento, agendamentoOriginal.id);
+    
+    if (!disponivel) {
+      showToast(`⚠️ Conflito: Sala ${sala} já ocupada por ${conflitoCom?.paciente_nome} (${conflitoCom?.horario} - ${calcularHorarioFim(conflitoCom?.horario, DURACAO_POR_PROCEDIMENTO[conflitoCom?.procedimento_nome] || 30)})`, 'error');
       return;
     }
     
     const agendamentoAtualizado = {
       ...agendamentoOriginal,
-      data: data.toISOString().split('T')[0],
+      data: novaData,
       horario: horario,
       sala: sala,
       duracao_procedimento: duracao
     };
     
     onAgendamentoMove?.(agendamentoAtualizado);
-    showToast(`✅ Agendamento movido para ${horario} - Sala ${sala} (${duracao} min)`, 'success');
+    showToast(`✅ Agendamento movido para ${horario} - Sala ${sala} (${duracao}min)`, 'success');
   };
 
   // Navegação
@@ -240,16 +259,6 @@ export default function CalendarioInterativo({
   const proximaSemana = () => {
     const newDate = new Date(dataAtual);
     newDate.setDate(dataAtual.getDate() + 7);
-    setDataAtual(newDate);
-  };
-  const diaAnterior = () => {
-    const newDate = new Date(dataAtual);
-    newDate.setDate(dataAtual.getDate() - 1);
-    setDataAtual(newDate);
-  };
-  const proximoDia = () => {
-    const newDate = new Date(dataAtual);
-    newDate.setDate(dataAtual.getDate() + 1);
     setDataAtual(newDate);
   };
 
@@ -266,62 +275,30 @@ export default function CalendarioInterativo({
     return date.toDateString() === hoje.toDateString();
   };
 
-  // Estatísticas da semana
-  const estatisticasSemana = () => {
-    let total = 0;
-    for (const dia of diasSemana) {
-      for (const sala of salas) {
-        total += getAgendamentosPorDiaESala(dia, sala).length;
-      }
-    }
-    return total;
-  };
-
-  // Dicas de produtividade
-  const dicas = [
-    { icone: '💡', texto: 'Arraste os cards para remarcar consultas' },
-    { icone: '🎯', texto: 'Use filtros para visualizar apenas um dentista' },
-    { icone: '⚡', texto: 'Ative o modo edição para mover agendamentos' },
-    { icone: '⏰', texto: 'O sistema respeita a duração de cada procedimento' },
-    { icone: '🚫', texto: 'Conflitos de horário são bloqueados automaticamente' }
-  ];
-  const [dicaAtual, setDicaAtual] = useState(0);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setDicaAtual((prev) => (prev + 1) % dicas.length);
-    }, 6000);
-    return () => clearInterval(interval);
-  }, []);
+  // Salas a serem exibidas
+  const salasExibidas = filtroSala === 'todas' ? salas : [filtroSala];
 
   return (
     <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-      {/* Header com controles */}
+      {/* Header */}
       <div className="p-3 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
         <div className="flex flex-wrap justify-between items-center gap-2">
           <div className="flex items-center gap-1">
-            <button onClick={visualizacao === 'semanal' ? semanaAnterior : diaAnterior} className="p-1.5 hover:bg-white rounded-lg transition">
+            <button onClick={semanaAnterior} className="p-1.5 hover:bg-white rounded-lg transition">
               <ChevronLeft size={18} />
             </button>
             <button onClick={hoje} className="px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
               Hoje
             </button>
-            <button onClick={visualizacao === 'semanal' ? proximaSemana : proximoDia} className="p-1.5 hover:bg-white rounded-lg transition">
+            <button onClick={proximaSemana} className="p-1.5 hover:bg-white rounded-lg transition">
               <ChevronRight size={18} />
             </button>
             <span className="text-sm font-bold ml-2">
-              {visualizacao === 'semanal' 
-                ? `${formatarData(diasSemana[0])} - ${formatarData(diasSemana[6])}`
-                : formatarDataCompleta(dataAtual)}
+              {formatarData(diasSemana[0])} - {formatarData(diasSemana[6])}
             </span>
           </div>
           
           <div className="flex gap-1">
-            <div className="flex bg-white rounded-lg shadow-sm overflow-hidden">
-              <button onClick={() => setVisualizacao('semanal')} className={`px-2 py-1 text-xs transition ${visualizacao === 'semanal' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}>Semana</button>
-              <button onClick={() => setVisualizacao('diaria')} className={`px-2 py-1 text-xs transition ${visualizacao === 'diaria' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}>Dia</button>
-            </div>
-            
             <div className="flex items-center gap-0.5 bg-white rounded-lg shadow-sm px-1">
               <button onClick={() => setZoom(Math.max(0.7, zoom - 0.1))} className="p-1 hover:bg-gray-100 rounded"><ZoomOut size={14} /></button>
               <span className="text-[10px] font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
@@ -329,7 +306,7 @@ export default function CalendarioInterativo({
             </div>
             
             <button onClick={() => setModoEdicao(!modoEdicao)} className={`px-2 py-1 text-xs rounded-lg transition flex items-center gap-1 ${modoEdicao ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
-              <Edit size={12} /> {modoEdicao ? 'Edição' : 'Mover'}
+              <Edit size={12} /> {modoEdicao ? 'Edição Ativa' : 'Mover'}
             </button>
           </div>
         </div>
@@ -350,99 +327,120 @@ export default function CalendarioInterativo({
             <option value="todas">Todas salas</option>
             {salas.map(s => <option key={s} value={s}>Sala {s}</option>)}
           </select>
-          
-          <span className="text-[10px] text-gray-400 ml-auto">📊 {estatisticasSemana()} consultas esta semana</span>
         </div>
       </div>
 
       {/* Calendário */}
       <div className="overflow-x-auto" style={{ fontSize: `${0.8 * zoom}rem` }}>
         <div className="min-w-[900px]">
-          <div className="grid" style={{ gridTemplateColumns: `80px repeat(${salas.length}, 1fr)` }}>
+          {/* Cabeçalho com dias e salas */}
+          <div className="grid" style={{ gridTemplateColumns: `80px repeat(${salasExibidas.length}, 1fr)` }}>
             <div className="p-2 border-b bg-gray-50 font-semibold text-xs sticky left-0 z-10 text-center">Horário</div>
-            {salas.map(sala => (
+            {salasExibidas.map(sala => (
               <div key={sala} className="p-2 border-b border-l bg-gray-50 font-semibold text-xs text-center">
-                <span className={`px-2 py-0.5 rounded-full text-[10px] ${SALA_COLORS[sala]?.bg || 'bg-gray-100'}`}>Sala {sala}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] bg-indigo-100 text-indigo-700">Sala {sala}</span>
               </div>
             ))}
             
-            {HORARIOS_BASE.map(horario => (
+            {/* Para cada horário */}
+            {TODOS_HORARIOS.map(horario => (
               <React.Fragment key={horario}>
                 <div className="p-1 border-b text-[10px] text-gray-500 text-right pr-2 bg-gray-50 sticky left-0 z-10 font-mono">
                   {horario}
                 </div>
-                {salas.map(sala => {
-                  if (visualizacao === 'semanal') {
-                    return (
-                      <div key={`${sala}-${horario}`} onDragOver={handleDragOver} onDrop={(e) => handleDrop(dataAtual, horario, sala, e)} className="border-b border-l p-0.5 min-h-[60px] hover:bg-blue-50 transition">
-                        {diasSemana.map((dia, idx) => {
-                          const agendamento = getAgendamentoNoHorario(getAgendamentosPorDiaESala(dia, sala), horario);
-                          if (!agendamento) return null;
-                          const duracao = getDuracaoProcedimento(agendamento.procedimento_nome, procedimentos);
-                          const altura = Math.min(60, duracao / 30 * 60);
-                          return (
-                            <div key={`${agendamento.id}-${idx}`} draggable={modoEdicao} onDragStart={(e) => handleDragStart(agendamento, e)} onDragEnd={handleDragEnd} onClick={() => { setAgendamentoSelecionado(agendamento); setShowDetalhes(true); }} className={`${STATUS_CONFIG[agendamento.status]?.bg} border-l-4 ${STATUS_CONFIG[agendamento.status]?.border} rounded-md p-1 text-[10px] cursor-pointer hover:shadow-md transition ${modoEdicao ? 'cursor-move' : 'cursor-pointer'} mb-0.5 relative`} style={{ minHeight: `${altura}px` }}>
-                              <div className="font-semibold truncate">{agendamento.paciente_nome}</div>
-                              <div className="text-gray-500 truncate">{agendamento.procedimento_nome?.substring(0, 15)}</div>
-                              <div className="flex justify-between mt-0.5 text-gray-400">
-                                <span>{agendamento.dentista_nome?.split(' ')[0]}</span>
-                                <span>{duracao}min</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  } else {
-                    const agendamento = getAgendamentoNoHorario(getAgendamentosPorDiaESala(dataAtual, sala), horario);
-                    return (
-                      <div key={`${sala}-${horario}`} onDragOver={handleDragOver} onDrop={(e) => handleDrop(dataAtual, horario, sala, e)} className="border-b border-l p-0.5 min-h-[60px] hover:bg-blue-50 transition">
-                        {agendamento && (
-                          <div draggable={modoEdicao} onDragStart={(e) => handleDragStart(agendamento, e)} onDragEnd={handleDragEnd} onClick={() => { setAgendamentoSelecionado(agendamento); setShowDetalhes(true); }} className={`${STATUS_CONFIG[agendamento.status]?.bg} border-l-4 ${STATUS_CONFIG[agendamento.status]?.border} rounded-md p-1 text-[10px] cursor-pointer hover:shadow-md transition h-full flex flex-col justify-between`}>
-                            <div>
-                              <div className="font-semibold truncate">{agendamento.paciente_nome}</div>
-                              <div className="text-gray-500 truncate">{agendamento.procedimento_nome}</div>
-                            </div>
-                            <div className="flex justify-between mt-1 text-gray-400">
-                              <span>{agendamento.dentista_nome?.split(' ')[0]}</span>
-                              <span>{getDuracaoProcedimento(agendamento.procedimento_nome, procedimentos)}min</span>
-                            </div>
+                {salasExibidas.map(sala => (
+                  <div 
+                    key={`${sala}-${horario}`}
+                    onDragOver={(e) => handleDragOver(e, dataAtual, horario, sala)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, dataAtual, horario, sala)}
+                    className={`border-b border-l p-0.5 min-h-[60px] transition relative
+                      ${dragOverHorario?.horario === horario && dragOverHorario?.sala === sala ? 'bg-green-100 border-2 border-green-400' : 'hover:bg-blue-50'}
+                    `}
+                  >
+                    {/* Mostrar agendamentos para cada dia da semana */}
+                    {diasSemana.map((dia, idx) => {
+                      const agendamento = getAgendamentoNoHorario(dia, sala, horario);
+                      if (!agendamento) return null;
+                      
+                      const duracao = DURACAO_POR_PROCEDIMENTO[agendamento.procedimento_nome] || 30;
+                      const altura = getCardHeight(agendamento.procedimento_nome);
+                      const ePrimeiroSlot = horario === agendamento.horario;
+                      
+                      if (!ePrimeiroSlot) return null;
+                      
+                      return (
+                        <div
+                          key={`${agendamento.id}-${idx}`}
+                          draggable={modoEdicao}
+                          onDragStart={(e) => handleDragStart(agendamento, e)}
+                          onDragEnd={handleDragEnd}
+                          onClick={() => {
+                            setAgendamentoSelecionado(agendamento);
+                            setShowDetalhes(true);
+                          }}
+                          className={`${STATUS_CONFIG[agendamento.status]?.bg} border-l-4 ${STATUS_CONFIG[agendamento.status]?.border} rounded-md p-1 text-[10px] cursor-pointer hover:shadow-md transition ${modoEdicao ? 'cursor-move' : 'cursor-pointer'} relative z-10`}
+                          style={{ 
+                            minHeight: `${altura}px`,
+                            height: `${altura}px`,
+                            overflow: 'hidden'
+                          }}
+                        >
+                          <div className="font-semibold truncate text-xs">{agendamento.paciente_nome}</div>
+                          <div className="text-gray-500 truncate text-[9px]">{agendamento.procedimento_nome}</div>
+                          <div className="flex justify-between mt-0.5 text-gray-400 text-[8px]">
+                            <span>{agendamento.dentista_nome?.split(' ')[0]}</span>
+                            <span>{duracao}min</span>
                           </div>
-                        )}
-                      </div>
-                    );
-                  }
-                })}
+                          <div className="absolute bottom-0 right-0 text-[8px] text-gray-400 bg-white bg-opacity-50 px-1 rounded">
+                            {calcularHorarioFim(agendamento.horario, duracao)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
               </React.Fragment>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Dica rodapé */}
-      <div className="p-2 border-t bg-gradient-to-r from-gray-50 to-white text-center text-[10px] text-gray-400">
-        {dicas[dicaAtual].icone} {dicas[dicaAtual].texto}
+      {/* Legenda */}
+      <div className="p-2 border-t bg-gray-50 text-[10px] text-gray-400 flex justify-between items-center flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <span>💡 Dica: Ative o modo edição para mover agendamentos</span>
+          <span>⏰ Cards mostram horário de término</span>
+        </div>
+        <div className="flex gap-3">
+          {Object.entries(STATUS_CONFIG).slice(0, 4).map(([key, config]) => (
+            <div key={key} className="flex items-center gap-1">
+              <div className={`w-2 h-2 rounded-full ${config.bg} border-l-2 ${config.border}`}></div>
+              <span>{config.label}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Modal de Detalhes */}
       {showDetalhes && agendamentoSelecionado && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setShowDetalhes(false)}>
-          <div className="bg-white rounded-xl max-w-md w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
             <div className={`p-4 border-b ${STATUS_CONFIG[agendamentoSelecionado.status]?.bg} rounded-t-xl`}>
               <div className="flex justify-between items-center">
                 <h3 className="font-bold">{agendamentoSelecionado.paciente_nome}</h3>
                 <button onClick={() => setShowDetalhes(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
               </div>
-              <p className="text-xs text-gray-500">{STATUS_CONFIG[agendamentoSelecionado.status]?.label}</p>
             </div>
             <div className="p-4 space-y-3">
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div><span className="text-gray-500">Data:</span> {new Date(agendamentoSelecionado.data).toLocaleDateString('pt-BR')}</div>
                 <div><span className="text-gray-500">Horário:</span> {agendamentoSelecionado.horario}</div>
+                <div><span className="text-gray-500">Término:</span> {calcularHorarioFim(agendamentoSelecionado.horario, DURACAO_POR_PROCEDIMENTO[agendamentoSelecionado.procedimento_nome] || 30)}</div>
+                <div><span className="text-gray-500">Duração:</span> {DURACAO_POR_PROCEDIMENTO[agendamentoSelecionado.procedimento_nome] || 30} min</div>
                 <div><span className="text-gray-500">Procedimento:</span> {agendamentoSelecionado.procedimento_nome}</div>
                 <div><span className="text-gray-500">Dentista:</span> {agendamentoSelecionado.dentista_nome}</div>
                 <div><span className="text-gray-500">Sala:</span> {agendamentoSelecionado.sala}</div>
-                <div><span className="text-gray-500">Duração:</span> {getDuracaoProcedimento(agendamentoSelecionado.procedimento_nome, procedimentos)} minutos</div>
               </div>
             </div>
             <div className="p-3 border-t bg-gray-50 flex gap-2">
