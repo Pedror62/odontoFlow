@@ -5,13 +5,55 @@ import {
   XCircle, AlertCircle, Phone, Mail, MapPin,
   CreditCard, Stethoscope, Calendar, ChevronRight,
   Plus, Edit, Trash2, Save, X, Move, Maximize2,
-  Filter, Eye, EyeOff, Grid, List as ListIcon, RefreshCw
+  Filter, Eye, EyeOff, Grid, List as ListIcon, RefreshCw,
+  Zap, Loader
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { showToast } from '../Toast';
 import CalendarioInterativo from '../agenda/CalendarioInterativo';
+
+// Funções auxiliares para validação de horário
+const horarioParaMinutos = (horario) => {
+  const [hora, minuto] = horario.split(':').map(Number);
+  return hora * 60 + minuto;
+};
+
+const minutosParaHorario = (minutos) => {
+  const hora = Math.floor(minutos / 60);
+  const minuto = minutos % 60;
+  return `${hora.toString().padStart(2, '0')}:${minuto.toString().padStart(2, '0')}`;
+};
+
+// Duração padrão por procedimento
+const getDuracaoProcedimento = (procedimentoId, procedimentos) => {
+  const proc = procedimentos?.find(p => p.id == procedimentoId);
+  return proc?.duracao || 30;
+};
+
+// Verificar conflito de horário
+const verificarConflitoHorario = (agendamentos, novoAgendamento, idIgnorar = null) => {
+  const novoInicio = horarioParaMinutos(novoAgendamento.horario);
+  const novaDuracao = getDuracaoProcedimento(novoAgendamento.procedimento_id, novoAgendamento.procedimentos);
+  const novoFim = novoInicio + novaDuracao;
+  
+  for (const ag of agendamentos) {
+    if (ag.id === idIgnorar) continue;
+    if (ag.data !== novoAgendamento.data) continue;
+    if (ag.sala !== novoAgendamento.sala) continue;
+    if (ag.status === 'cancelado') continue;
+    
+    const agInicio = horarioParaMinutos(ag.horario);
+    const agDuracao = getDuracaoProcedimento(ag.procedimento_id, novoAgendamento.procedimentos);
+    const agFim = agInicio + agDuracao;
+    
+    if (novoInicio < agFim && novoFim > agInicio) {
+      return { conflito: true, com: ag };
+    }
+  }
+  return { conflito: false, com: null };
+};
 
 export default function SecretarioDashboard() {
   const { logout, user } = useAuth();
@@ -42,6 +84,9 @@ export default function SecretarioDashboard() {
   const [notificacoes, setNotificacoes] = useState([]);
   const [mostrarNotificacoes, setMostrarNotificacoes] = useState(false);
   const [forceUpdate, setForceUpdate] = useState(0);
+  const [carregandoHorarios, setCarregandoHorarios] = useState(false);
+  const [sugestoesHorarios, setSugestoesHorarios] = useState([]);
+  const [mostrarSugestoes, setMostrarSugestoes] = useState(false);
   
   // Estado para cadastro rápido
   const [quickPaciente, setQuickPaciente] = useState({
@@ -57,17 +102,16 @@ export default function SecretarioDashboard() {
     procedimento_id: '',
     dentista_id: '',
     data: new Date().toISOString().split('T')[0],
-    horario: '09:00',
+    horario: '',
     sala: '01'
   });
 
-  // CORREÇÃO 1: Verificar notificações de retorno pendente com atualização automática
+  // Verificar notificações de retorno pendente
   useEffect(() => {
     const retornosPendentes = agendamentos.filter(ag => 
       ag.status === 'retorno_pendente' && !ag.notificacao_vista
     );
     
-    // Verificar se há novos retornos que não estão nas notificações atuais
     const novosRetornos = retornosPendentes.filter(
       ret => !notificacoes.some(n => n.id === ret.id)
     );
@@ -78,7 +122,7 @@ export default function SecretarioDashboard() {
     }
   }, [agendamentos]);
 
-  // CORREÇÃO 2: Sincronização entre abas
+  // Sincronização entre abas
   useEffect(() => {
     const handleStorageChange = (e) => {
       if (e.key === 'agendamentos') {
@@ -89,13 +133,14 @@ export default function SecretarioDashboard() {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // CORREÇÃO 3: Fechar modal com ESC
+  // Fechar modal com ESC
   useEffect(() => {
     const handleEsc = (e) => {
       if (e.key === 'Escape') {
         setShowQuickPaciente(false);
         setShowQuickAgendamento(false);
         setMostrarNotificacoes(false);
+        setMostrarSugestoes(false);
       }
     };
     window.addEventListener('keydown', handleEsc);
@@ -144,6 +189,75 @@ export default function SecretarioDashboard() {
     showToast('Abra o formulário para reagendar o retorno', 'info');
   };
 
+  // ========== NOVA FUNÇÃO: Buscar horários disponíveis ==========
+  const buscarHorariosDisponiveis = () => {
+    if (!quickAgendamento.dentista_id || !quickAgendamento.procedimento_id) {
+      showToast('Selecione dentista e procedimento primeiro', 'error');
+      return;
+    }
+    
+    if (!quickAgendamento.data) {
+      showToast('Selecione uma data primeiro', 'error');
+      return;
+    }
+    
+    setCarregandoHorarios(true);
+    
+    setTimeout(() => {
+      const duracao = getDuracaoProcedimento(quickAgendamento.procedimento_id, procedimentos);
+      const inicioExpediente = 8 * 60; // 08:00
+      const fimExpediente = 19 * 60; // 19:00
+      const horariosDisponiveis = [];
+      
+      // Filtrar agendamentos do mesmo dentista e mesma data
+      const agendamentosDentista = agendamentos.filter(ag => 
+        ag.dentista_id == quickAgendamento.dentista_id && 
+        ag.data === quickAgendamento.data &&
+        ag.status !== 'cancelado'
+      );
+      
+      // Verificar horários de 30 em 30 minutos
+      for (let minutos = inicioExpediente; minutos + duracao <= fimExpediente; minutos += 30) {
+        const horario = minutosParaHorario(minutos);
+        const inicio = minutos;
+        const fim = inicio + duracao;
+        
+        let conflito = false;
+        for (const ag of agendamentosDentista) {
+          const agDuracao = getDuracaoProcedimento(ag.procedimento_id, procedimentos);
+          const agInicio = horarioParaMinutos(ag.horario);
+          const agFim = agInicio + agDuracao;
+          
+          if (inicio < agFim && fim > agInicio) {
+            conflito = true;
+            break;
+          }
+        }
+        
+        if (!conflito) {
+          horariosDisponiveis.push(horario);
+        }
+      }
+      
+      setSugestoesHorarios(horariosDisponiveis);
+      setMostrarSugestoes(horariosDisponiveis.length > 0);
+      setCarregandoHorarios(false);
+      
+      if (horariosDisponiveis.length === 0) {
+        showToast('Não há horários disponíveis nesta data. Tente outra data.', 'warning');
+      } else {
+        showToast(`Encontrados ${horariosDisponiveis.length} horários disponíveis!`, 'success');
+      }
+    }, 300);
+  };
+
+  // Aplicar horário sugerido
+  const aplicarHorarioSugerido = (horario) => {
+    setQuickAgendamento({ ...quickAgendamento, horario });
+    setMostrarSugestoes(false);
+    showToast(`Horário ${horario} selecionado!`, 'success');
+  };
+
   // Cadastro rápido de paciente
   const handleQuickSavePaciente = () => {
     if (!quickPaciente.nome.trim()) {
@@ -169,20 +283,48 @@ export default function SecretarioDashboard() {
     }
   };
 
-  // Agendamento rápido
+  // ========== AGENDAMENTO RÁPIDO COM VALIDAÇÃO ==========
   const handleQuickAgendamento = () => {
+    // Validação de campos obrigatórios
     if (!quickAgendamento.paciente_id || !quickAgendamento.procedimento_id || !quickAgendamento.dentista_id) {
       showToast('Preencha todos os campos obrigatórios', 'error');
+      return;
+    }
+    
+    if (!quickAgendamento.horario) {
+      showToast('Selecione um horário (use o botão "Buscar horários")', 'error');
+      return;
+    }
+    
+    // VALIDAÇÃO DE CONFLITO DE HORÁRIO
+    const novoAgendamento = {
+      paciente_id: quickAgendamento.paciente_id,
+      procedimento_id: quickAgendamento.procedimento_id,
+      dentista_id: quickAgendamento.dentista_id,
+      sala: quickAgendamento.sala,
+      data: quickAgendamento.data,
+      horario: quickAgendamento.horario,
+      procedimentos: procedimentos
+    };
+    
+    const { conflito, com } = verificarConflitoHorario(agendamentos, novoAgendamento);
+    
+    if (conflito) {
+      const duracao = getDuracaoProcedimento(quickAgendamento.procedimento_id, procedimentos);
+      const fim = minutosParaHorario(horarioParaMinutos(quickAgendamento.horario) + duracao);
+      showToast(`⚠️ Conflito: Sala ${quickAgendamento.sala} já ocupada por ${com?.paciente_nome} (${com?.horario} - ${fim})`, 'error');
       return;
     }
     
     const paciente = pacientes.find(p => p.id == quickAgendamento.paciente_id);
     const procedimento = procedimentos.find(p => p.id == quickAgendamento.procedimento_id);
     const dentista = dentistas.find(d => d.id == quickAgendamento.dentista_id);
+    const plano = planos.find(p => p.id === 3);
     
     const valorComDesconto = procedimento?.valor || 0;
+    const duracao = procedimento?.duracao || 30;
     
-    const novoAgendamento = {
+    const novoAgendamentoObj = {
       id: Date.now(),
       paciente_id: quickAgendamento.paciente_id,
       paciente_nome: paciente?.nome,
@@ -197,30 +339,33 @@ export default function SecretarioDashboard() {
       horario: quickAgendamento.horario,
       valor_final: valorComDesconto,
       valor_original: procedimento?.valor,
+      duracao: duracao,
       status: 'agendado',
       created_at: new Date().toISOString()
     };
     
-    adicionarAgendamento(novoAgendamento);
-    showToast(`Agendamento para ${paciente?.nome} realizado com sucesso!`, 'success');
-    setShowQuickAgendamento(false);
+    adicionarAgendamento(novoAgendamentoObj);
+    showToast(`✅ Agendamento para ${paciente?.nome} realizado com sucesso!`, 'success');
     
+    // Limpar formulário
     setQuickAgendamento({
       paciente_id: '',
       procedimento_id: '',
       dentista_id: '',
       data: new Date().toISOString().split('T')[0],
-      horario: '09:00',
+      horario: '',
       sala: '01'
     });
     setPacienteSelecionado(null);
+    setMostrarSugestoes(false);
+    setShowQuickAgendamento(false);
+    setForceUpdate(prev => prev + 1);
   };
 
   // Função para mover agendamento (drag & drop)
   const handleAgendamentoMove = (agendamentoAtualizado) => {
     atualizarAgendamento(agendamentoAtualizado);
     showToast(`Agendamento remarcado com sucesso!`, 'success');
-    // Forçar atualização da UI
     setForceUpdate(prev => prev + 1);
   };
 
@@ -269,12 +414,11 @@ export default function SecretarioDashboard() {
     }).length
   };
 
-  // Salas para o calendário
   const salas = salaSelecionada === 'todas' ? ['01', '02', '03'] : [salaSelecionada];
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header simplificado */}
+      {/* Header */}
       <div className="bg-white shadow-sm border-b sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 py-2">
           <div className="flex justify-between items-center">
@@ -289,7 +433,7 @@ export default function SecretarioDashboard() {
             </div>
             
             <div className="flex items-center gap-2">
-              {/* Botão Notificações com badge */}
+              {/* Notificações */}
               <div className="relative">
                 <button
                   onClick={() => setMostrarNotificacoes(!mostrarNotificacoes)}
@@ -305,7 +449,7 @@ export default function SecretarioDashboard() {
                 </button>
                 
                 {mostrarNotificacoes && notificacoes.length > 0 && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border z-50 overflow-hidden animate-in slide-in-from-top-2 duration-200">
+                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border z-50 overflow-hidden">
                     <div className="p-3 border-b bg-orange-50">
                       <h4 className="font-semibold text-sm">🔄 Retornos Pendentes</h4>
                       <p className="text-[10px] text-gray-500">Clique em um retorno para agendar</p>
@@ -315,17 +459,9 @@ export default function SecretarioDashboard() {
                         <div key={notif.id} className="p-3 border-b hover:bg-gray-50 transition cursor-pointer" onClick={() => marcarNotificacaoComoLida(notif.id)}>
                           <p className="text-sm font-medium">{notif.paciente_nome}</p>
                           <p className="text-xs text-gray-500">{notif.procedimento_nome}</p>
-                          {notif.observacao_dentista && (
-                            <p className="text-[10px] text-gray-400 italic mt-1">"{notif.observacao_dentista}"</p>
-                          )}
-                          <button className="text-xs text-blue-600 mt-1 hover:underline">
-                            Agendar retorno →
-                          </button>
+                          <button className="text-xs text-blue-600 mt-1 hover:underline">Agendar retorno →</button>
                         </div>
                       ))}
-                    </div>
-                    <div className="p-2 border-t bg-gray-50 text-center">
-                      <button onClick={() => setMostrarNotificacoes(false)} className="text-[10px] text-gray-400">Fechar</button>
                     </div>
                   </div>
                 )}
@@ -355,11 +491,7 @@ export default function SecretarioDashboard() {
                 <UserPlus size={14} /> Paciente
               </button>
               
-              <button
-                onClick={handleLogout}
-                className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition"
-                title="Sair"
-              >
+              <button onClick={handleLogout} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition">
                 <LogOut size={18} />
               </button>
             </div>
@@ -367,40 +499,25 @@ export default function SecretarioDashboard() {
         </div>
       </div>
 
-      {/* Barra de Filtros (colapsável) */}
+      {/* Filtros */}
       {mostrarFiltros && (
-        <div className="bg-white border-b shadow-sm sticky top-[57px] z-20 animate-in slide-in-from-top-2 duration-200">
+        <div className="bg-white border-b shadow-sm sticky top-[57px] z-20">
           <div className="max-w-7xl mx-auto px-4 py-2 flex flex-wrap items-center gap-3">
             <span className="text-xs font-medium text-gray-500">Filtros:</span>
-            <select
-              value={salaSelecionada}
-              onChange={(e) => setSalaSelecionada(e.target.value)}
-              className="px-2 py-1 text-xs border rounded-lg focus:ring-2 focus:ring-blue-500"
-            >
+            <select value={salaSelecionada} onChange={(e) => setSalaSelecionada(e.target.value)} className="px-2 py-1 text-xs border rounded-lg">
               <option value="todas">Todas salas</option>
               {['01', '02', '03'].map(s => <option key={s} value={s}>Sala {s}</option>)}
             </select>
-            
-            <select
-              value={dentistaSelecionado}
-              onChange={(e) => setDentistaSelecionado(e.target.value)}
-              className="px-2 py-1 text-xs border rounded-lg focus:ring-2 focus:ring-blue-500"
-            >
+            <select value={dentistaSelecionado} onChange={(e) => setDentistaSelecionado(e.target.value)} className="px-2 py-1 text-xs border rounded-lg">
               <option value="todos">Todos dentistas</option>
               {dentistas.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>)}
             </select>
-            
-            <button
-              onClick={limparFiltros}
-              className="text-xs text-red-500 hover:text-red-600"
-            >
-              Limpar filtros
-            </button>
+            <button onClick={limparFiltros} className="text-xs text-red-500 hover:text-red-600">Limpar filtros</button>
           </div>
         </div>
       )}
 
-      {/* Dashboard Rápido com cards simplificados */}
+      {/* Stats */}
       <div className="max-w-7xl mx-auto px-4 py-3">
         <div className="grid grid-cols-4 gap-3">
           <div className="bg-white rounded-lg p-2 shadow-sm border-l-4 border-blue-500">
@@ -422,7 +539,7 @@ export default function SecretarioDashboard() {
         </div>
       </div>
 
-      {/* Próximos atendimentos - carrossel simplificado */}
+      {/* Próximos atendimentos */}
       {proximosAtendimentos.length > 0 && (
         <div className="max-w-7xl mx-auto px-4 pb-2">
           <div className="flex items-center gap-2 mb-1">
@@ -442,19 +559,14 @@ export default function SecretarioDashboard() {
                     <p className="text-[10px] text-gray-400">Sala {ag.sala}</p>
                   </div>
                 </div>
-                <button
-                  onClick={() => handleAgendamentoClick(ag)}
-                  className="text-[10px] text-blue-600 hover:underline"
-                >
-                  Editar
-                </button>
+                <button onClick={() => handleAgendamentoClick(ag)} className="text-[10px] text-blue-600 hover:underline">Editar</button>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Barra de Busca simplificada */}
+      {/* Busca */}
       <div className="max-w-7xl mx-auto px-4 pb-3">
         <div className="relative">
           <Search className="absolute left-3 top-2 text-gray-400" size={14} />
@@ -473,30 +585,16 @@ export default function SecretarioDashboard() {
         </div>
       </div>
 
-      {/* Calendário Interativo */}
+      {/* Calendário */}
       <div className="max-w-7xl mx-auto px-4 pb-6">
         <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
           <div className="p-3 border-b bg-gray-50 flex justify-between items-center">
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setVisualizacao('semanal')}
-                  className={`px-3 py-1 text-xs rounded-lg transition ${visualizacao === 'semanal' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
-                >
-                  Semana
-                </button>
-                <button
-                  onClick={() => setVisualizacao('diaria')}
-                  className={`px-3 py-1 text-xs rounded-lg transition ${visualizacao === 'diaria' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}
-                >
-                  Dia
-                </button>
+                <button onClick={() => setVisualizacao('semanal')} className={`px-3 py-1 text-xs rounded-lg transition ${visualizacao === 'semanal' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}>Semana</button>
+                <button onClick={() => setVisualizacao('diaria')} className={`px-3 py-1 text-xs rounded-lg transition ${visualizacao === 'diaria' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}>Dia</button>
               </div>
-              <button
-                onClick={() => window.location.reload()}
-                className="p-1 text-gray-400 hover:text-gray-600 transition"
-                title="Atualizar"
-              >
+              <button onClick={() => window.location.reload()} className="p-1 text-gray-400 hover:text-gray-600 transition" title="Atualizar">
                 <RefreshCw size={14} />
               </button>
             </div>
@@ -518,124 +616,10 @@ export default function SecretarioDashboard() {
         </div>
       </div>
 
-      {/* Resultados da Busca (Popover) */}
-      {searchTerm && pacientesFiltrados.length > 0 && (
-        <div className="fixed bottom-4 right-4 w-80 bg-white rounded-xl shadow-2xl border z-40 overflow-hidden animate-in slide-in-from-right-5 duration-200">
-          <div className="p-2 bg-blue-50 border-b flex justify-between items-center">
-            <span className="text-xs font-medium">📋 Pacientes encontrados ({pacientesFiltrados.length})</span>
-            <button onClick={() => setSearchTerm('')} className="text-gray-400 hover:text-gray-600">
-              <X size={14} />
-            </button>
-          </div>
-          <div className="max-h-64 overflow-y-auto">
-            {pacientesFiltrados.slice(0, 5).map(paciente => (
-              <div 
-                key={paciente.id}
-                onClick={() => {
-                  setPacienteSelecionado(paciente);
-                  setShowQuickAgendamento(true);
-                  setQuickAgendamento({ ...quickAgendamento, paciente_id: paciente.id });
-                  setSearchTerm('');
-                }}
-                className="p-2 hover:bg-blue-50 cursor-pointer flex justify-between items-center border-b last:border-0 transition"
-              >
-                <div>
-                  <p className="text-sm font-medium">{paciente.nome}</p>
-                  <p className="text-[10px] text-gray-500">{paciente.telefone || 'Sem telefone'}</p>
-                </div>
-                <button className="text-blue-600 text-xs font-medium">Agendar →</button>
-              </div>
-            ))}
-            {pacientesFiltrados.length > 5 && (
-              <div className="p-2 text-center text-[10px] text-gray-400 border-t">
-                + {pacientesFiltrados.length - 5} outros pacientes
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Modal de Cadastro Rápido de Paciente */}
-      {showQuickPaciente && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-4 border-b bg-gradient-to-r from-green-50 to-white">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <UserPlus className="text-green-600" size={20} />
-                  <h2 className="text-lg font-bold">Cadastro Rápido</h2>
-                </div>
-                <button onClick={() => setShowQuickPaciente(false)} className="text-gray-400 hover:text-gray-600">
-                  <X size={20} />
-                </button>
-              </div>
-              <p className="text-[10px] text-gray-500 mt-1">Apenas campos essenciais</p>
-            </div>
-            
-            <div className="p-4 space-y-3">
-              <div>
-                <label className="block text-xs font-medium mb-1">Nome completo *</label>
-                <input
-                  type="text"
-                  value={quickPaciente.nome}
-                  onChange={(e) => setQuickPaciente({...quickPaciente, nome: e.target.value})}
-                  className="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                  placeholder="Ex: Maria da Silva"
-                  autoFocus
-                />
-              </div>
-              
-              <div>
-                <label className="block text-xs font-medium mb-1">Telefone</label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-2 text-gray-400" size={14} />
-                  <input
-                    type="tel"
-                    value={quickPaciente.telefone}
-                    onChange={(e) => setQuickPaciente({...quickPaciente, telefone: e.target.value})}
-                    className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    placeholder="(11) 99999-9999"
-                  />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-xs font-medium mb-1">Convênio</label>
-                <select
-                  value={quickPaciente.convenio}
-                  onChange={(e) => setQuickPaciente({...quickPaciente, convenio: e.target.value})}
-                  className="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                >
-                  <option>Particular</option>
-                  <option>Uniodonto</option>
-                  <option>Amil Dental</option>
-                  <option>Bradesco Dental</option>
-                </select>
-              </div>
-            </div>
-            
-            <div className="p-4 border-t bg-gray-50 flex gap-2">
-              <button
-                onClick={handleQuickSavePaciente}
-                className="flex-1 bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700 transition text-sm"
-              >
-                Salvar
-              </button>
-              <button
-                onClick={() => setShowQuickPaciente(false)}
-                className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-300 transition text-sm"
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal de Agendamento Rápido */}
+      {/* Modal de Agendamento Rápido com Busca de Horários */}
       {showQuickAgendamento && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto">
             <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-white sticky top-0 bg-white">
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
@@ -646,10 +630,11 @@ export default function SecretarioDashboard() {
                   <X size={20} />
                 </button>
               </div>
-              <p className="text-[10px] text-gray-500 mt-1">Preencha os dados da consulta</p>
+              <p className="text-[10px] text-gray-500">Preencha os dados da consulta</p>
             </div>
             
             <div className="p-4 space-y-3">
+              {/* Seleção de Paciente */}
               <div>
                 <label className="block text-xs font-medium mb-1">Paciente *</label>
                 <div className="flex gap-2">
@@ -663,18 +648,9 @@ export default function SecretarioDashboard() {
                     className="flex-1 px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Selecione...</option>
-                    {pacientes.map(p => (
-                      <option key={p.id} value={p.id}>{p.nome}</option>
-                    ))}
+                    {pacientes.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
                   </select>
-                  <button
-                    onClick={() => {
-                      setShowQuickAgendamento(false);
-                      setShowQuickPaciente(true);
-                    }}
-                    className="px-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition text-sm"
-                    title="Novo paciente"
-                  >
+                  <button onClick={() => { setShowQuickAgendamento(false); setShowQuickPaciente(true); }} className="px-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition text-sm">
                     <UserPlus size={16} />
                   </button>
                 </div>
@@ -694,12 +670,9 @@ export default function SecretarioDashboard() {
                     className="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Selecione</option>
-                    {procedimentos.map(p => (
-                      <option key={p.id} value={p.id}>{p.nome}</option>
-                    ))}
+                    {procedimentos.map(p => <option key={p.id} value={p.id}>{p.nome} ({p.duracao || 30}min)</option>)}
                   </select>
                 </div>
-                
                 <div>
                   <label className="block text-xs font-medium mb-1">Dentista *</label>
                   <select
@@ -708,9 +681,7 @@ export default function SecretarioDashboard() {
                     className="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Selecione</option>
-                    {dentistas.map(d => (
-                      <option key={d.id} value={d.id}>{d.nome}</option>
-                    ))}
+                    {dentistas.map(d => <option key={d.id} value={d.id}>{d.nome}</option>)}
                   </select>
                 </div>
               </div>
@@ -726,50 +697,119 @@ export default function SecretarioDashboard() {
                     min={new Date().toISOString().split('T')[0]}
                   />
                 </div>
-                
                 <div>
-                  <label className="block text-xs font-medium mb-1">Horário *</label>
+                  <label className="block text-xs font-medium mb-1">Sala</label>
                   <select
-                    value={quickAgendamento.horario}
-                    onChange={(e) => setQuickAgendamento({...quickAgendamento, horario: e.target.value})}
+                    value={quickAgendamento.sala}
+                    onChange={(e) => setQuickAgendamento({...quickAgendamento, sala: e.target.value})}
                     className="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    {['08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', 
-                      '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30'].map(h => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
+                    <option>01</option>
+                    <option>02</option>
+                    <option>03</option>
                   </select>
                 </div>
               </div>
               
+              {/* Horário com Busca Inteligente */}
               <div>
-                <label className="block text-xs font-medium mb-1">Sala</label>
-                <select
-                  value={quickAgendamento.sala}
-                  onChange={(e) => setQuickAgendamento({...quickAgendamento, sala: e.target.value})}
-                  className="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option>01</option>
-                  <option>02</option>
-                  <option>03</option>
-                </select>
+                <label className="block text-xs font-medium mb-1">Horário *</label>
+                <div className="flex gap-2">
+                  <select
+                    value={quickAgendamento.horario}
+                    onChange={(e) => setQuickAgendamento({...quickAgendamento, horario: e.target.value})}
+                    className="flex-1 px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={carregandoHorarios}
+                  >
+                    <option value="">Selecione ou busque</option>
+                    {sugestoesHorarios.map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={buscarHorariosDisponiveis}
+                    disabled={carregandoHorarios || !quickAgendamento.dentista_id || !quickAgendamento.procedimento_id || !quickAgendamento.data}
+                    className="px-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-1 text-sm disabled:opacity-50"
+                  >
+                    {carregandoHorarios ? <Loader size={14} className="animate-spin" /> : <Zap size={14} />}
+                    Buscar
+                  </button>
+                </div>
+                {mostrarSugestoes && sugestoesHorarios.length > 0 && (
+                  <div className="mt-2 p-2 bg-green-50 rounded-lg">
+                    <p className="text-[10px] text-green-700 mb-1">✅ {sugestoesHorarios.length} horários disponíveis</p>
+                    <div className="flex flex-wrap gap-1">
+                      {sugestoesHorarios.slice(0, 5).map(h => (
+                        <button key={h} onClick={() => aplicarHorarioSugerido(h)} className="text-[10px] bg-white border border-green-300 px-2 py-0.5 rounded hover:bg-green-100">
+                          {h}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             
             <div className="p-4 border-t bg-gray-50 flex gap-2">
-              <button
-                onClick={handleQuickAgendamento}
-                className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition text-sm"
-              >
+              <button onClick={handleQuickAgendamento} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition text-sm">
                 Confirmar
               </button>
-              <button
-                onClick={() => setShowQuickAgendamento(false)}
-                className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-300 transition text-sm"
-              >
+              <button onClick={() => setShowQuickAgendamento(false)} className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-300 transition text-sm">
                 Cancelar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Cadastro Rápido */}
+      {showQuickPaciente && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="p-4 border-b bg-gradient-to-r from-green-50 to-white">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <UserPlus className="text-green-600" size={20} />
+                  <h2 className="text-lg font-bold">Cadastro Rápido</h2>
+                </div>
+                <button onClick={() => setShowQuickPaciente(false)} className="text-gray-400 hover:text-gray-600">
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-4 space-y-3">
+              <input type="text" placeholder="Nome completo *" value={quickPaciente.nome} onChange={(e) => setQuickPaciente({...quickPaciente, nome: e.target.value})} className="w-full px-3 py-2 text-sm border rounded-lg" />
+              <input type="tel" placeholder="Telefone" value={quickPaciente.telefone} onChange={(e) => setQuickPaciente({...quickPaciente, telefone: e.target.value})} className="w-full px-3 py-2 text-sm border rounded-lg" />
+              <select value={quickPaciente.convenio} onChange={(e) => setQuickPaciente({...quickPaciente, convenio: e.target.value})} className="w-full px-3 py-2 text-sm border rounded-lg">
+                <option>Particular</option>
+                <option>Uniodonto</option>
+                <option>Amil Dental</option>
+                <option>Bradesco Dental</option>
+              </select>
+            </div>
+            
+            <div className="p-4 border-t bg-gray-50 flex gap-2">
+              <button onClick={handleQuickSavePaciente} className="flex-1 bg-green-600 text-white py-2 rounded-lg font-medium text-sm">Salvar</button>
+              <button onClick={() => setShowQuickPaciente(false)} className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg text-sm">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Popover de resultados de busca */}
+      {searchTerm && pacientesFiltrados.length > 0 && !showQuickAgendamento && (
+        <div className="fixed bottom-4 right-4 w-80 bg-white rounded-xl shadow-2xl border z-40 overflow-hidden">
+          <div className="p-2 bg-blue-50 border-b flex justify-between">
+            <span className="text-xs font-medium">📋 Pacientes ({pacientesFiltrados.length})</span>
+            <button onClick={() => setSearchTerm('')} className="text-gray-400"><X size={14} /></button>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {pacientesFiltrados.slice(0, 5).map(p => (
+              <div key={p.id} onClick={() => { setPacienteSelecionado(p); setShowQuickAgendamento(true); setQuickAgendamento({...quickAgendamento, paciente_id: p.id}); setSearchTerm(''); }} className="p-2 hover:bg-blue-50 cursor-pointer">
+                <p className="text-sm font-medium">{p.nome}</p>
+                <p className="text-[10px] text-gray-500">{p.telefone || 'Sem telefone'}</p>
+              </div>
+            ))}
           </div>
         </div>
       )}
