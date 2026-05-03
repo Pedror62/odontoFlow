@@ -4,7 +4,7 @@ import {
   AlertCircle, Calendar, ChevronLeft, ChevronRight, 
   Filter, Download, Printer, Eye, Edit, Trash2, 
   MoreVertical, MapPin, Phone, Mail, DollarSign,
-  Plus, Minus, ZoomIn, ZoomOut, RefreshCw, X
+  Plus, Minus, ZoomIn, ZoomOut, RefreshCw, X, AlertTriangle
 } from 'lucide-react';
 import { showToast } from '../Toast';
 
@@ -25,22 +25,90 @@ const SALA_COLORS = {
   '03': { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300' }
 };
 
-// Gerar horários (08:00 às 20:00)
-const HORARIOS = [];
+// Gerar horários base (08:00 às 20:00)
+const HORARIOS_BASE = [];
 for (let i = 8; i <= 20; i++) {
-  HORARIOS.push(`${i.toString().padStart(2, '0')}:00`);
-  HORARIOS.push(`${i.toString().padStart(2, '0')}:30`);
+  HORARIOS_BASE.push(`${i.toString().padStart(2, '0')}:00`);
+  HORARIOS_BASE.push(`${i.toString().padStart(2, '0')}:30`);
 }
 
+// Função para calcular horários disponíveis baseado na duração do procedimento
+const calcularHorariosDisponiveis = (procedimentoDuracao, horarioInicioDisponivel = '08:00') => {
+  const horarios = [];
+  const duracaoMinutos = procedimentoDuracao || 30;
+  const blocosPorHora = 60 / duracaoMinutos;
+  
+  for (let i = 8; i <= 20; i++) {
+    for (let j = 0; j < blocosPorHora; j++) {
+      const minutos = j * duracaoMinutos;
+      if (minutos < 60) {
+        const horario = `${i.toString().padStart(2, '0')}:${minutos.toString().padStart(2, '0')}`;
+        if (horario >= horarioInicioDisponivel) {
+          horarios.push(horario);
+        }
+      }
+    }
+  }
+  return horarios;
+};
+
+// Função para verificar conflito de horário considerando a duração
+const verificarConflitoHorario = (agendamentosExistentes, novaData, novoSala, novoHorario, duracaoMinutos, idIgnorar = null) => {
+  const novoInicio = converterHorarioParaMinutos(novoHorario);
+  const novoFim = novoInicio + duracaoMinutos;
+  
+  for (const ag of agendamentosExistentes) {
+    if (ag.id === idIgnorar) continue;
+    if (ag.data !== novaData) continue;
+    if (ag.sala !== novoSala) continue;
+    if (ag.status === 'cancelado') continue;
+    
+    const agInicio = converterHorarioParaMinutos(ag.horario);
+    const agDuracao = ag.duracao_procedimento || 30;
+    const agFim = agInicio + agDuracao;
+    
+    // Verifica sobreposição
+    if (novoInicio < agFim && novoFim > agInicio) {
+      return {
+        conflito: true,
+        com: ag,
+        mensagem: `Conflito com ${ag.paciente_nome} das ${ag.horario} às ${formatarMinutosParaHorario(agFim)}`
+      };
+    }
+  }
+  
+  return { conflito: false };
+};
+
+// Funções auxiliares para conversão de horário
+const converterHorarioParaMinutos = (horario) => {
+  const [hora, minuto] = horario.split(':').map(Number);
+  return hora * 60 + minuto;
+};
+
+const formatarMinutosParaHorario = (minutosTotais) => {
+  const hora = Math.floor(minutosTotais / 60);
+  const minuto = minutosTotais % 60;
+  return `${hora.toString().padStart(2, '0')}:${minuto.toString().padStart(2, '0')}`;
+};
+
+// Obter duração do procedimento pelo nome
+const getDuracaoProcedimento = (procedimentoNome, procedimentos) => {
+  const proc = procedimentos?.find(p => p.nome === procedimentoNome);
+  return proc?.duracao || 30;
+};
+
 export default function CalendarioInterativo({ 
-  agendamentos, 
-  dentistas, 
+  agendamentos = [], 
+  dentistas = [], 
+  procedimentos = [],
   salas = ['01', '02', '03'],
+  visualizacao = 'semanal',
   onAgendamentoClick,
   onAgendamentoMove,
   onAgendamentoEdit,
   onAgendamentoDelete,
-  onStatusChange
+  onStatusChange 
 }) {
   const [dataAtual, setDataAtual] = useState(new Date());
   const [zoom, setZoom] = useState(1);
@@ -50,39 +118,35 @@ export default function CalendarioInterativo({
   const [modoEdicao, setModoEdicao] = useState(false);
   const [agendamentoSelecionado, setAgendamentoSelecionado] = useState(null);
   const [showDetalhes, setShowDetalhes] = useState(false);
-  const [visualizacao, setVisualizacao] = useState('semanal'); // 'semanal' ou 'diaria'
+  const [horariosDisponiveis, setHorariosDisponiveis] = useState(HORARIOS_BASE);
 
-  // Obter a data selecionada (para visualização diária)
-  const getDataSelecionada = () => {
-    return dataAtual;
-  };
-
-  // Obter os dias da semana a partir da data atual
-  const getDiasDaSemana = () => {
-    const dias = [];
-    const startOfWeek = new Date(dataAtual);
-    const day = startOfWeek.getDay();
-    const diff = (day === 0 ? 6 : day - 1);
-    startOfWeek.setDate(startOfWeek.getDate() - diff);
-    
-    for (let i = 0; i < 7; i++) {
-      const dia = new Date(startOfWeek);
-      dia.setDate(startOfWeek.getDate() + i);
-      dias.push(dia);
+  // Atualizar horários disponíveis baseado nos procedimentos
+  useEffect(() => {
+    if (agendamentoSelecionado) {
+      const duracao = getDuracaoProcedimento(agendamentoSelecionado.procedimento_nome, procedimentos);
+      setHorariosDisponiveis(calcularHorariosDisponiveis(duracao));
     }
-    return dias;
+  }, [agendamentoSelecionado, procedimentos]);
+
+  // Obter data de início da semana
+  const getStartOfWeek = (date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = (day === 0 ? 6 : day - 1);
+    d.setDate(d.getDate() - diff);
+    return d;
   };
 
-  const diasSemana = getDiasDaSemana();
-
-  // Formatar data para comparação (YYYY-MM-DD)
-  const formatDateKey = (date) => {
-    return date.toISOString().split('T')[0];
-  };
+  const startOfWeek = getStartOfWeek(dataAtual);
+  const diasSemana = Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(startOfWeek);
+    day.setDate(startOfWeek.getDate() + i);
+    return day;
+  });
 
   // Filtrar agendamentos
   const getAgendamentosFiltrados = () => {
-    let filtrados = [...(agendamentos || [])];
+    let filtrados = [...agendamentos];
     
     if (filtroDentista !== 'todos') {
       filtrados = filtrados.filter(ag => ag.dentista_nome === filtroDentista);
@@ -98,7 +162,7 @@ export default function CalendarioInterativo({
   };
 
   const getAgendamentosPorDiaESala = (data, sala) => {
-    const dataStr = formatDateKey(data);
+    const dataStr = data.toISOString().split('T')[0];
     const filtrados = getAgendamentosFiltrados();
     return filtrados.filter(ag => ag.data === dataStr && ag.sala === sala);
   };
@@ -107,7 +171,14 @@ export default function CalendarioInterativo({
     return agendamentosDia.find(ag => ag.horario === horario);
   };
 
-  // Drag & Drop
+  // Verificar se um horário está disponível para um procedimento específico
+  const isHorarioDisponivel = (data, sala, horario, procedimentoNome, idIgnorar = null) => {
+    const duracao = getDuracaoProcedimento(procedimentoNome, procedimentos);
+    const conflito = verificarConflitoHorario(agendamentos, data, sala, horario, duracao, idIgnorar);
+    return !conflito.conflito;
+  };
+
+  // Drag & Drop com validação de duração
   const handleDragStart = (agendamento, e) => {
     if (!modoEdicao) return;
     e.dataTransfer.setData('text/plain', JSON.stringify(agendamento));
@@ -122,7 +193,7 @@ export default function CalendarioInterativo({
     e.preventDefault();
   };
 
-  const handleDrop = (data, horario, sala, e) => {
+  const handleDrop = async (data, horario, sala, e) => {
     e.preventDefault();
     if (!modoEdicao) {
       showToast('Ative o modo edição para mover agendamentos', 'info');
@@ -130,77 +201,57 @@ export default function CalendarioInterativo({
     }
     
     const agendamentoOriginal = JSON.parse(e.dataTransfer.getData('text/plain'));
+    const duracao = getDuracaoProcedimento(agendamentoOriginal.procedimento_nome, procedimentos);
     
-    const conflito = getAgendamentoNoHorario(
-      getAgendamentosPorDiaESala(data, sala),
-      horario
+    // Verificar conflito de horário
+    const conflito = verificarConflitoHorario(
+      agendamentos, 
+      data.toISOString().split('T')[0], 
+      sala, 
+      horario, 
+      duracao,
+      agendamentoOriginal.id
     );
     
-    if (conflito && conflito.id !== agendamentoOriginal.id) {
-      showToast(`⚠️ Horário ocupado por ${conflito.paciente_nome}`, 'error');
+    if (conflito.conflito) {
+      showToast(`⚠️ ${conflito.mensagem}`, 'error');
       return;
     }
     
     const agendamentoAtualizado = {
       ...agendamentoOriginal,
-      data: formatDateKey(data),
+      data: data.toISOString().split('T')[0],
       horario: horario,
-      sala: sala
+      sala: sala,
+      duracao_procedimento: duracao
     };
     
     onAgendamentoMove?.(agendamentoAtualizado);
-    showToast(`✅ Agendamento movido para ${horario} - Sala ${sala}`, 'success');
+    showToast(`✅ Agendamento movido para ${horario} - Sala ${sala} (${duracao} min)`, 'success');
   };
 
   // Navegação
-  const hoje = () => {
-    setDataAtual(new Date());
-  };
-
-  const diaAnterior = () => {
-    const newDate = new Date(dataAtual);
-    newDate.setDate(dataAtual.getDate() - 1);
-    setDataAtual(newDate);
-  };
-
-  const proximoDia = () => {
-    const newDate = new Date(dataAtual);
-    newDate.setDate(dataAtual.getDate() + 1);
-    setDataAtual(newDate);
-  };
-
+  const hoje = () => setDataAtual(new Date());
   const semanaAnterior = () => {
     const newDate = new Date(dataAtual);
     newDate.setDate(dataAtual.getDate() - 7);
     setDataAtual(newDate);
   };
-
   const proximaSemana = () => {
     const newDate = new Date(dataAtual);
     newDate.setDate(dataAtual.getDate() + 7);
     setDataAtual(newDate);
   };
-
-  // Estatísticas da semana
-  const estatisticasSemana = () => {
-    let total = 0;
-    for (const dia of diasSemana) {
-      for (const sala of salas) {
-        total += getAgendamentosPorDiaESala(dia, sala).length;
-      }
-    }
-    
-    const porStatus = {};
-    for (const ag of (agendamentos || [])) {
-      if (diasSemana.some(dia => formatDateKey(dia) === ag.data)) {
-        porStatus[ag.status] = (porStatus[ag.status] || 0) + 1;
-      }
-    }
-    
-    return { total, porStatus };
+  const diaAnterior = () => {
+    const newDate = new Date(dataAtual);
+    newDate.setDate(dataAtual.getDate() - 1);
+    setDataAtual(newDate);
   };
-
-  const stats = estatisticasSemana();
+  const proximoDia = () => {
+    const newDate = new Date(dataAtual);
+    newDate.setDate(dataAtual.getDate() + 1);
+    setDataAtual(newDate);
+  };
 
   const formatarData = (date) => {
     return date.toLocaleDateString('pt-BR', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -215,199 +266,127 @@ export default function CalendarioInterativo({
     return date.toDateString() === hoje.toDateString();
   };
 
+  // Estatísticas da semana
+  const estatisticasSemana = () => {
+    let total = 0;
+    for (const dia of diasSemana) {
+      for (const sala of salas) {
+        total += getAgendamentosPorDiaESala(dia, sala).length;
+      }
+    }
+    return total;
+  };
+
   // Dicas de produtividade
   const dicas = [
     { icone: '💡', texto: 'Arraste os cards para remarcar consultas' },
     { icone: '🎯', texto: 'Use filtros para visualizar apenas um dentista' },
     { icone: '⚡', texto: 'Ative o modo edição para mover agendamentos' },
-    { icone: '📅', texto: 'Clique em um card para ver detalhes completos' },
-    { icone: '🔍', texto: 'Use o zoom para melhor visualização' }
+    { icone: '⏰', texto: 'O sistema respeita a duração de cada procedimento' },
+    { icone: '🚫', texto: 'Conflitos de horário são bloqueados automaticamente' }
   ];
   const [dicaAtual, setDicaAtual] = useState(0);
 
   useEffect(() => {
     const interval = setInterval(() => {
       setDicaAtual((prev) => (prev + 1) % dicas.length);
-    }, 5000);
+    }, 6000);
     return () => clearInterval(interval);
   }, []);
 
   return (
     <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-      {/* Header com controles avançados */}
-      <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
-        <div className="flex flex-wrap justify-between items-center gap-3">
-          <div className="flex items-center gap-2">
-            {/* Botões de navegação */}
-            <div className="flex items-center gap-1 border-r pr-3 mr-2">
-              <button onClick={semanaAnterior} className="p-2 hover:bg-white rounded-lg transition shadow-sm">
-                <ChevronLeft size={20} />
-              </button>
-              <button onClick={hoje} className="px-4 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm">
-                Hoje
-              </button>
-              <button onClick={proximaSemana} className="p-2 hover:bg-white rounded-lg transition shadow-sm">
-                <ChevronRight size={20} />
-              </button>
-            </div>
-            
-            {/* Indicador da semana atual */}
-            <div className="bg-white px-4 py-1.5 rounded-lg shadow-sm">
-              <span className="text-sm font-medium">
-                {formatarData(diasSemana[0])} - {formatarData(diasSemana[6])}
-              </span>
-            </div>
+      {/* Header com controles */}
+      <div className="p-3 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
+        <div className="flex flex-wrap justify-between items-center gap-2">
+          <div className="flex items-center gap-1">
+            <button onClick={visualizacao === 'semanal' ? semanaAnterior : diaAnterior} className="p-1.5 hover:bg-white rounded-lg transition">
+              <ChevronLeft size={18} />
+            </button>
+            <button onClick={hoje} className="px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+              Hoje
+            </button>
+            <button onClick={visualizacao === 'semanal' ? proximaSemana : proximoDia} className="p-1.5 hover:bg-white rounded-lg transition">
+              <ChevronRight size={18} />
+            </button>
+            <span className="text-sm font-bold ml-2">
+              {visualizacao === 'semanal' 
+                ? `${formatarData(diasSemana[0])} - ${formatarData(diasSemana[6])}`
+                : formatarDataCompleta(dataAtual)}
+            </span>
           </div>
           
-          <div className="flex gap-2">
-            {/* Alternar visualização */}
+          <div className="flex gap-1">
             <div className="flex bg-white rounded-lg shadow-sm overflow-hidden">
-              <button
-                onClick={() => setVisualizacao('semanal')}
-                className={`px-3 py-1.5 text-sm transition ${visualizacao === 'semanal' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}
-              >
-                Semanal
-              </button>
-              <button
-                onClick={() => setVisualizacao('diaria')}
-                className={`px-3 py-1.5 text-sm transition ${visualizacao === 'diaria' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}
-              >
-                Diária
-              </button>
+              <button onClick={() => setVisualizacao('semanal')} className={`px-2 py-1 text-xs transition ${visualizacao === 'semanal' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}>Semana</button>
+              <button onClick={() => setVisualizacao('diaria')} className={`px-2 py-1 text-xs transition ${visualizacao === 'diaria' ? 'bg-blue-600 text-white' : 'text-gray-600'}`}>Dia</button>
             </div>
             
-            {/* Zoom */}
-            <div className="flex items-center gap-1 bg-white rounded-lg shadow-sm px-2">
-              <button onClick={() => setZoom(Math.max(0.8, zoom - 0.1))} className="p-1 hover:bg-gray-100 rounded">
-                <ZoomOut size={16} />
-              </button>
-              <span className="text-xs font-mono w-12 text-center">{Math.round(zoom * 100)}%</span>
-              <button onClick={() => setZoom(Math.min(1.5, zoom + 0.1))} className="p-1 hover:bg-gray-100 rounded">
-                <ZoomIn size={16} />
-              </button>
+            <div className="flex items-center gap-0.5 bg-white rounded-lg shadow-sm px-1">
+              <button onClick={() => setZoom(Math.max(0.7, zoom - 0.1))} className="p-1 hover:bg-gray-100 rounded"><ZoomOut size={14} /></button>
+              <span className="text-[10px] font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
+              <button onClick={() => setZoom(Math.min(1.5, zoom + 0.1))} className="p-1 hover:bg-gray-100 rounded"><ZoomIn size={14} /></button>
             </div>
             
-            {/* Modo Edição */}
-            <button
-              onClick={() => setModoEdicao(!modoEdicao)}
-              className={`px-3 py-1.5 text-sm rounded-lg transition shadow-sm flex items-center gap-1 ${
-                modoEdicao ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              <Edit size={14} />
-              {modoEdicao ? 'Edição Ativa' : 'Modo Edição'}
+            <button onClick={() => setModoEdicao(!modoEdicao)} className={`px-2 py-1 text-xs rounded-lg transition flex items-center gap-1 ${modoEdicao ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
+              <Edit size={12} /> {modoEdicao ? 'Edição' : 'Mover'}
             </button>
           </div>
         </div>
         
-        {/* Filtros e Estatísticas */}
-        <div className="flex flex-wrap justify-between items-center gap-3 mt-4">
-          <div className="flex gap-2">
-            <select
-              value={filtroDentista}
-              onChange={(e) => setFiltroDentista(e.target.value)}
-              className="px-3 py-1.5 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
-            >
-              <option value="todos">👨‍⚕️ Todos dentistas</option>
-              {dentistas?.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>)}
-            </select>
-            
-            <select
-              value={filtroStatus}
-              onChange={(e) => setFiltroStatus(e.target.value)}
-              className="px-3 py-1.5 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
-            >
-              <option value="todos">📋 Todos status</option>
-              {Object.entries(STATUS_CONFIG).map(([key, config]) => (
-                <option key={key} value={key}>{config.icon} {config.label}</option>
-              ))}
-            </select>
-            
-            <select
-              value={filtroSala}
-              onChange={(e) => setFiltroSala(e.target.value)}
-              className="px-3 py-1.5 text-sm border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
-            >
-              <option value="todas">🚪 Todas salas</option>
-              {salas.map(s => <option key={s} value={s}>Sala {s}</option>)}
-            </select>
-          </div>
+        {/* Filtros */}
+        <div className="flex flex-wrap gap-2 mt-2">
+          <select value={filtroDentista} onChange={(e) => setFiltroDentista(e.target.value)} className="px-2 py-0.5 text-[10px] border rounded-lg">
+            <option value="todos">Todos dentistas</option>
+            {dentistas.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>)}
+          </select>
           
-          <div className="flex gap-3 text-xs">
-            <div className="flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full">
-              <Activity size={14} /> {stats.total} consultas
-            </div>
-            <div className="flex items-center gap-1 bg-blue-100 text-blue-700 px-3 py-1 rounded-full">
-              <Calendar size={14} /> {agendamentos?.length || 0} total
-            </div>
-          </div>
+          <select value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)} className="px-2 py-0.5 text-[10px] border rounded-lg">
+            <option value="todos">Todos status</option>
+            {Object.entries(STATUS_CONFIG).map(([key, config]) => <option key={key} value={key}>{config.icon} {config.label}</option>)}
+          </select>
+          
+          <select value={filtroSala} onChange={(e) => setFiltroSala(e.target.value)} className="px-2 py-0.5 text-[10px] border rounded-lg">
+            <option value="todas">Todas salas</option>
+            {salas.map(s => <option key={s} value={s}>Sala {s}</option>)}
+          </select>
+          
+          <span className="text-[10px] text-gray-400 ml-auto">📊 {estatisticasSemana()} consultas esta semana</span>
         </div>
       </div>
 
-      {/* Calendário Principal */}
-      <div className="overflow-x-auto" style={{ fontSize: `${0.875 * zoom}rem` }}>
-        <div className="min-w-[1000px]">
-          {/* Cabeçalho com dias */}
-          <div className="grid" style={{ gridTemplateColumns: `100px repeat(${salas.length}, 1fr)` }}>
-            <div className="p-3 border-b bg-gray-50 font-semibold text-sm sticky left-0 z-10">Horário</div>
+      {/* Calendário */}
+      <div className="overflow-x-auto" style={{ fontSize: `${0.8 * zoom}rem` }}>
+        <div className="min-w-[900px]">
+          <div className="grid" style={{ gridTemplateColumns: `80px repeat(${salas.length}, 1fr)` }}>
+            <div className="p-2 border-b bg-gray-50 font-semibold text-xs sticky left-0 z-10 text-center">Horário</div>
             {salas.map(sala => (
-              <div key={sala} className="p-3 border-b border-l bg-gray-50 font-semibold text-sm text-center">
-                <div className={`inline-block px-3 py-1 rounded-full ${SALA_COLORS[sala]?.bg || 'bg-gray-100'} ${SALA_COLORS[sala]?.text || 'text-gray-700'}`}>
-                  🚪 Sala {sala}
-                </div>
+              <div key={sala} className="p-2 border-b border-l bg-gray-50 font-semibold text-xs text-center">
+                <span className={`px-2 py-0.5 rounded-full text-[10px] ${SALA_COLORS[sala]?.bg || 'bg-gray-100'}`}>Sala {sala}</span>
               </div>
             ))}
             
-            {/* Para cada horário */}
-            {HORARIOS.map(horario => (
+            {HORARIOS_BASE.map(horario => (
               <React.Fragment key={horario}>
-                <div className="p-2 border-b text-xs text-gray-500 text-right pr-3 bg-gray-50 sticky left-0 z-10 font-mono">
+                <div className="p-1 border-b text-[10px] text-gray-500 text-right pr-2 bg-gray-50 sticky left-0 z-10 font-mono">
                   {horario}
                 </div>
                 {salas.map(sala => {
-                  // Para visualização semanal, mostrar todos os dias
                   if (visualizacao === 'semanal') {
                     return (
-                      <div 
-                        key={`${sala}-${horario}`}
-                        onDragOver={handleDragOver}
-                        onDrop={(e) => handleDrop(dataAtual, horario, sala, e)}
-                        className="border-b border-l p-1 min-h-[70px] hover:bg-blue-50 transition relative"
-                      >
+                      <div key={`${sala}-${horario}`} onDragOver={handleDragOver} onDrop={(e) => handleDrop(dataAtual, horario, sala, e)} className="border-b border-l p-0.5 min-h-[60px] hover:bg-blue-50 transition">
                         {diasSemana.map((dia, idx) => {
-                          const agendamento = getAgendamentoNoHorario(
-                            getAgendamentosPorDiaESala(dia, sala),
-                            horario
-                          );
+                          const agendamento = getAgendamentoNoHorario(getAgendamentosPorDiaESala(dia, sala), horario);
                           if (!agendamento) return null;
-                          
+                          const duracao = getDuracaoProcedimento(agendamento.procedimento_nome, procedimentos);
+                          const altura = Math.min(60, duracao / 30 * 60);
                           return (
-                            <div
-                              key={`${agendamento.id}-${idx}`}
-                              draggable={modoEdicao}
-                              onDragStart={(e) => handleDragStart(agendamento, e)}
-                              onDragEnd={handleDragEnd}
-                              onClick={() => {
-                                setAgendamentoSelecionado(agendamento);
-                                setShowDetalhes(true);
-                              }}
-                              className={`${STATUS_CONFIG[agendamento.status]?.bg || STATUS_CONFIG.agendado.bg} 
-                                border-l-4 ${STATUS_CONFIG[agendamento.status]?.border || STATUS_CONFIG.agendado.border} 
-                                rounded-lg p-2 text-xs cursor-pointer hover:shadow-md transition-all 
-                                ${modoEdicao ? 'cursor-move' : 'cursor-pointer'}
-                                mb-1 relative`}
-                            >
-                              <div className="flex justify-between items-start">
-                                <span className="font-semibold truncate">{agendamento.paciente_nome}</span>
-                                <span className="text-[10px] opacity-70">{STATUS_CONFIG[agendamento.status]?.icon}</span>
-                              </div>
-                              <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-1">
-                                <Stethoscope size={10} />
-                                <span className="truncate">{agendamento.procedimento_nome}</span>
-                              </div>
-                              <div className="flex justify-between items-center mt-1 text-[10px] text-gray-400">
+                            <div key={`${agendamento.id}-${idx}`} draggable={modoEdicao} onDragStart={(e) => handleDragStart(agendamento, e)} onDragEnd={handleDragEnd} onClick={() => { setAgendamentoSelecionado(agendamento); setShowDetalhes(true); }} className={`${STATUS_CONFIG[agendamento.status]?.bg} border-l-4 ${STATUS_CONFIG[agendamento.status]?.border} rounded-md p-1 text-[10px] cursor-pointer hover:shadow-md transition ${modoEdicao ? 'cursor-move' : 'cursor-pointer'} mb-0.5 relative`} style={{ minHeight: `${altura}px` }}>
+                              <div className="font-semibold truncate">{agendamento.paciente_nome}</div>
+                              <div className="text-gray-500 truncate">{agendamento.procedimento_nome?.substring(0, 15)}</div>
+                              <div className="flex justify-between mt-0.5 text-gray-400">
                                 <span>{agendamento.dentista_nome?.split(' ')[0]}</span>
-                                <span>{formatarData(dia)}</span>
+                                <span>{duracao}min</span>
                               </div>
                             </div>
                           );
@@ -415,47 +394,18 @@ export default function CalendarioInterativo({
                       </div>
                     );
                   } else {
-                    // Visualização diária
-                    const agendamento = getAgendamentoNoHorario(
-                      getAgendamentosPorDiaESala(dataAtual, sala),
-                      horario
-                    );
-                    
+                    const agendamento = getAgendamentoNoHorario(getAgendamentosPorDiaESala(dataAtual, sala), horario);
                     return (
-                      <div 
-                        key={`${sala}-${horario}`}
-                        onDragOver={handleDragOver}
-                        onDrop={(e) => handleDrop(dataAtual, horario, sala, e)}
-                        className="border-b border-l p-1 min-h-[70px] hover:bg-blue-50 transition relative"
-                      >
+                      <div key={`${sala}-${horario}`} onDragOver={handleDragOver} onDrop={(e) => handleDrop(dataAtual, horario, sala, e)} className="border-b border-l p-0.5 min-h-[60px] hover:bg-blue-50 transition">
                         {agendamento && (
-                          <div
-                            draggable={modoEdicao}
-                            onDragStart={(e) => handleDragStart(agendamento, e)}
-                            onDragEnd={handleDragEnd}
-                            onClick={() => {
-                              setAgendamentoSelecionado(agendamento);
-                              setShowDetalhes(true);
-                            }}
-                            className={`${STATUS_CONFIG[agendamento.status]?.bg || STATUS_CONFIG.agendado.bg} 
-                              border-l-4 ${STATUS_CONFIG[agendamento.status]?.border || STATUS_CONFIG.agendado.border} 
-                              rounded-lg p-2 text-xs cursor-pointer hover:shadow-md transition-all 
-                              ${modoEdicao ? 'cursor-move' : 'cursor-pointer'}
-                              h-full flex flex-col justify-between`}
-                          >
+                          <div draggable={modoEdicao} onDragStart={(e) => handleDragStart(agendamento, e)} onDragEnd={handleDragEnd} onClick={() => { setAgendamentoSelecionado(agendamento); setShowDetalhes(true); }} className={`${STATUS_CONFIG[agendamento.status]?.bg} border-l-4 ${STATUS_CONFIG[agendamento.status]?.border} rounded-md p-1 text-[10px] cursor-pointer hover:shadow-md transition h-full flex flex-col justify-between`}>
                             <div>
-                              <div className="flex justify-between items-start">
-                                <span className="font-semibold truncate">{agendamento.paciente_nome}</span>
-                                <span className="text-[10px] opacity-70">{STATUS_CONFIG[agendamento.status]?.icon}</span>
-                              </div>
-                              <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-1">
-                                <Stethoscope size={10} />
-                                <span className="truncate">{agendamento.procedimento_nome}</span>
-                              </div>
+                              <div className="font-semibold truncate">{agendamento.paciente_nome}</div>
+                              <div className="text-gray-500 truncate">{agendamento.procedimento_nome}</div>
                             </div>
-                            <div className="flex justify-between items-center mt-1 text-[10px] text-gray-400">
+                            <div className="flex justify-between mt-1 text-gray-400">
                               <span>{agendamento.dentista_nome?.split(' ')[0]}</span>
-                              <span>{agendamento.horario}</span>
+                              <span>{getDuracaoProcedimento(agendamento.procedimento_nome, procedimentos)}min</span>
                             </div>
                           </div>
                         )}
@@ -469,110 +419,35 @@ export default function CalendarioInterativo({
         </div>
       </div>
 
-      {/* Informação da data atual na visualização diária */}
-      {visualizacao === 'diaria' && (
-        <div className="p-3 bg-blue-50 border-t text-center">
-          <span className="text-sm text-blue-700">
-            📅 Visualizando: {formatarDataCompleta(dataAtual)}
-          </span>
-        </div>
-      )}
-
-      {/* Dicas de produtividade */}
-      <div className="p-3 border-t bg-gradient-to-r from-gray-50 to-white">
-        <div className="flex items-center justify-between text-xs">
-          <div className="flex items-center gap-3">
-            <span className="text-gray-400">💡 Dica:</span>
-            <span className="text-gray-600">
-              {dicas[dicaAtual].icone} {dicas[dicaAtual].texto}
-            </span>
-          </div>
-          <div className="flex gap-4">
-            {Object.entries(STATUS_CONFIG).slice(0, 5).map(([key, config]) => (
-              <div key={key} className="flex items-center gap-1">
-                <div className={`w-3 h-3 ${config.bg} rounded border-l-2 ${config.border}`}></div>
-                <span className="text-[10px]">{config.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Dica rodapé */}
+      <div className="p-2 border-t bg-gradient-to-r from-gray-50 to-white text-center text-[10px] text-gray-400">
+        {dicas[dicaAtual].icone} {dicas[dicaAtual].texto}
       </div>
 
       {/* Modal de Detalhes */}
       {showDetalhes && agendamentoSelecionado && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <div className={`p-5 border-b ${STATUS_CONFIG[agendamentoSelecionado.status]?.bg || 'bg-gray-50'} rounded-t-2xl`}>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setShowDetalhes(false)}>
+          <div className="bg-white rounded-xl max-w-md w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className={`p-4 border-b ${STATUS_CONFIG[agendamentoSelecionado.status]?.bg} rounded-t-xl`}>
               <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">{STATUS_CONFIG[agendamentoSelecionado.status]?.icon}</span>
-                  <h2 className="text-xl font-bold">{agendamentoSelecionado.paciente_nome}</h2>
-                </div>
-                <button onClick={() => setShowDetalhes(false)} className="text-gray-400 hover:text-gray-600">
-                  <X size={24} />
-                </button>
+                <h3 className="font-bold">{agendamentoSelecionado.paciente_nome}</h3>
+                <button onClick={() => setShowDetalhes(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
               </div>
-              <p className="text-sm text-gray-500 mt-1">
-                {STATUS_CONFIG[agendamentoSelecionado.status]?.label}
-              </p>
+              <p className="text-xs text-gray-500">{STATUS_CONFIG[agendamentoSelecionado.status]?.label}</p>
             </div>
-            
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-gray-50 p-3 rounded-xl">
-                  <p className="text-[10px] text-gray-400 uppercase">Data</p>
-                  <p className="font-medium">{new Date(agendamentoSelecionado.data).toLocaleDateString('pt-BR')}</p>
-                </div>
-                <div className="bg-gray-50 p-3 rounded-xl">
-                  <p className="text-[10px] text-gray-400 uppercase">Horário</p>
-                  <p className="font-medium">{agendamentoSelecionado.horario}</p>
-                </div>
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div><span className="text-gray-500">Data:</span> {new Date(agendamentoSelecionado.data).toLocaleDateString('pt-BR')}</div>
+                <div><span className="text-gray-500">Horário:</span> {agendamentoSelecionado.horario}</div>
+                <div><span className="text-gray-500">Procedimento:</span> {agendamentoSelecionado.procedimento_nome}</div>
+                <div><span className="text-gray-500">Dentista:</span> {agendamentoSelecionado.dentista_nome}</div>
+                <div><span className="text-gray-500">Sala:</span> {agendamentoSelecionado.sala}</div>
+                <div><span className="text-gray-500">Duração:</span> {getDuracaoProcedimento(agendamentoSelecionado.procedimento_nome, procedimentos)} minutos</div>
               </div>
-              
-              <div className="bg-gray-50 p-3 rounded-xl">
-                <p className="text-[10px] text-gray-400 uppercase flex items-center gap-1"><Stethoscope size={12} /> Procedimento</p>
-                <p className="font-medium">{agendamentoSelecionado.procedimento_nome}</p>
-              </div>
-              
-              <div className="bg-gray-50 p-3 rounded-xl">
-                <p className="text-[10px] text-gray-400 uppercase flex items-center gap-1"><User size={12} /> Dentista</p>
-                <p className="font-medium">{agendamentoSelecionado.dentista_nome}</p>
-              </div>
-              
-              <div className="bg-gray-50 p-3 rounded-xl">
-                <p className="text-[10px] text-gray-400 uppercase flex items-center gap-1"><MapPin size={12} /> Sala</p>
-                <p className="font-medium">Sala {agendamentoSelecionado.sala}</p>
-              </div>
-              
-              {agendamentoSelecionado.valor_final && (
-                <div className="bg-green-50 p-3 rounded-xl">
-                  <p className="text-[10px] text-gray-400 uppercase flex items-center gap-1"><DollarSign size={12} /> Valor</p>
-                  <p className="font-medium text-green-600">R$ {agendamentoSelecionado.valor_final.toFixed(2)}</p>
-                </div>
-              )}
             </div>
-            
-            <div className="p-5 border-t bg-gray-50 flex gap-3 rounded-b-2xl">
-              <button
-                onClick={() => {
-                  onAgendamentoEdit?.(agendamentoSelecionado);
-                  setShowDetalhes(false);
-                }}
-                className="flex-1 bg-blue-600 text-white py-2 rounded-xl hover:bg-blue-700 transition flex items-center justify-center gap-2"
-              >
-                <Edit size={16} /> Editar
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm('Tem certeza que deseja cancelar este agendamento?')) {
-                    onAgendamentoDelete?.(agendamentoSelecionado.id);
-                    setShowDetalhes(false);
-                  }
-                }}
-                className="flex-1 bg-red-600 text-white py-2 rounded-xl hover:bg-red-700 transition flex items-center justify-center gap-2"
-              >
-                <Trash2 size={16} /> Cancelar
-              </button>
+            <div className="p-3 border-t bg-gray-50 flex gap-2">
+              <button onClick={() => { onAgendamentoEdit?.(agendamentoSelecionado); setShowDetalhes(false); }} className="flex-1 bg-blue-600 text-white py-1.5 rounded-lg text-sm">Editar</button>
+              <button onClick={() => { onAgendamentoDelete?.(agendamentoSelecionado.id); setShowDetalhes(false); }} className="flex-1 bg-red-600 text-white py-1.5 rounded-lg text-sm">Cancelar</button>
             </div>
           </div>
         </div>
