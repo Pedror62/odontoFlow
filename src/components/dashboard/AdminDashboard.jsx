@@ -3,7 +3,7 @@ import {
   Settings, DollarSign, Users, Calendar, TrendingUp, 
   LogOut, Shield, Activity, CreditCard, FileText, 
   Package, Scissors, MapPin, History, BarChart3, AlertTriangle,
-  Menu, X, Home, Eye
+  Menu, X, Home, Eye, PieChart, LineChart
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
@@ -20,11 +20,12 @@ import DistribuicaoSala from '../admin/DistribuicaoSala';
 import HistoricoConsumo from '../admin/HistoricoConsumo';
 import NotificationCenter from '../notifications/NotificationCenter';
 import VisualizarProntuario from '../admin/VisualizarProntuario';
+import DashboardAnalytics from '../admin/DashboardAnalytics';
 
 export default function AdminDashboard() {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('procedimentos');
+  const [activeTab, setActiveTab] = useState('analytics');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [prontuarioView, setProntuarioView] = useState(null);
@@ -76,8 +77,9 @@ export default function AdminDashboard() {
     valorEstoque: 0
   });
 
-  // Itens do menu lateral
+  // Itens do menu lateral - Adicionado Analytics
   const menuItems = [
+    { id: 'analytics', label: 'Dashboard', icon: BarChart3, color: 'teal' },
     { id: 'procedimentos', label: 'Procedimentos', icon: Activity, color: 'blue' },
     { id: 'planos', label: 'Planos de Saúde', icon: CreditCard, color: 'green' },
     { id: 'estoque', label: 'Estoque', icon: Package, color: 'indigo' },
@@ -85,7 +87,7 @@ export default function AdminDashboard() {
     { id: 'distribuicao', label: 'Distribuição por Sala', icon: MapPin, color: 'orange' },
     { id: 'historico-consumo', label: 'Histórico de Consumo', icon: History, color: 'red' },
     { id: 'relatorios', label: 'Relatórios', icon: TrendingUp, color: 'teal' },
-    { id: 'pacientes', label: 'Pacientes', icon: Users, color: 'green' }, // NOVO: aba de pacientes
+    { id: 'pacientes', label: 'Pacientes', icon: Users, color: 'green' },
   ];
 
   // Calcular estatísticas quando os dados mudarem
@@ -212,6 +214,15 @@ export default function AdminDashboard() {
   // Renderizar conteúdo baseado na aba ativa
   const renderContent = () => {
     switch (activeTab) {
+      case 'analytics':
+        return (
+          <DashboardAnalytics
+            agendamentos={agendamentos}
+            procedimentos={procedimentos}
+            dentistas={dentistas}
+            pacientes={pacientes}
+          />
+        );
       case 'procedimentos':
         return (
           <ProcedimentosManager
@@ -488,8 +499,8 @@ export default function AdminDashboard() {
           </div>
         </header>
 
-        {/* Cards de Estatísticas - Só mostra se não estiver na aba de pacientes */}
-        {activeTab !== 'pacientes' && (
+        {/* Cards de Estatísticas - Só mostra se não estiver na aba de analytics ou pacientes */}
+        {activeTab !== 'pacientes' && activeTab !== 'analytics' && (
           <div className="p-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
               <div className="bg-white rounded-lg shadow p-3">
